@@ -1,14 +1,5 @@
---[[
-    NEXO – All-in-One Combat Script (FIXED + STREAMPROOF)
-    Discord: https://discord.gg/XV6HcW5Nn
-    Open UI: RightShift
-]]
-
 task.wait()
 
--- ============================================================
--- SERVICES
--- ============================================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -17,9 +8,9 @@ local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local Camera = workspace.CurrentCamera
 
--- ============================================================
--- SETTINGS (persistent)
--- ============================================================
+_G.NexoConfigs = _G.NexoConfigs or {}
+local ConfigStore = _G.NexoConfigs
+
 local Config = {
     Aimbot = {
         Enabled = false,
@@ -44,9 +35,7 @@ local Config = {
     Voidspam = { Enabled = false, Speed = 0.5 },
     ESP = {
         Enabled = false,
-        Streamproof = false,          -- NEW: streamproof toggle
         Boxes = true,
-        Skeleton = false,
         Names = true,
         Health = true,
         Distance = true,
@@ -59,30 +48,27 @@ local Config = {
     Settings = { ConfigName = "Default", AutoLoad = true },
 }
 
--- ============================================================
--- DRAWING OBJECTS & STREAMPROOF WINDOW
--- ============================================================
-local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = false
-FOVCircle.Color = Color3.fromRGB(247,54,219)
-FOVCircle.Thickness = 1
-FOVCircle.NumSides = 32
-FOVCircle.Transparency = 0.5
+local function SafeDraw(type)
+    local ok, obj = pcall(Drawing.new, type)
+    if ok and obj then return obj end
+    return nil
+end
 
-local EspObjects = {}       -- only used in non-streamproof mode
-local esp_counter = 0
+local FOVCircle = SafeDraw("Circle")
+if FOVCircle then
+    FOVCircle.Visible = false
+    FOVCircle.Color = Color3.fromRGB(255,255,255)
+    FOVCircle.Thickness = 1
+    FOVCircle.NumSides = 32
+    FOVCircle.Transparency = 0.5
+    FOVCircle.Radius = Config.Aimbot.FOV
+end
 
--- Streamproof overlay window (created only when needed)
-local StreamWindow = nil
-local WindowSupported = false   -- true if Drawing.new("Window") works
+local EspObjects = {}
 
--- ============================================================
--- UTILITY FUNCTIONS
--- ============================================================
 local function IsOnScreen(pos)
     local vp = Camera:WorldToViewportPoint(pos)
-    local x, y = vp.X, vp.Y
-    return Vector2.new(x * Camera.ViewportSize.X, y * Camera.ViewportSize.Y), (vp.Z > 0 and x >= 0 and x <= 1 and y >= 0 and y <= 1)
+    return Vector2.new(vp.X * Camera.ViewportSize.X, vp.Y * Camera.ViewportSize.Y), (vp.Z > 0 and vp.X >= 0 and vp.X <= 1 and vp.Y >= 0 and vp.Y <= 1)
 end
 
 local function GetPlayerColor(player)
@@ -92,17 +78,6 @@ local function GetPlayerColor(player)
     return Config.ESP.EnemyColor
 end
 
-local function GetConfigNames()
-    local names = {"Default"}
-    if getgenv().NexoConfigs then
-        for name in pairs(getgenv().NexoConfigs) do
-            table.insert(names, name)
-        end
-    end
-    return names
-end
-
--- Simulate a mouse click for triggerbot
 local function TriggerClick()
     pcall(function()
         Mouse:Button1Down()
@@ -111,13 +86,10 @@ local function TriggerClick()
     end)
 end
 
--- ============================================================
--- SAVE / LOAD CONFIG
--- ============================================================
 local function SaveConfig(name)
     name = name or Config.Settings.ConfigName
-    getgenv().NexoConfigs = getgenv().NexoConfigs or {}
-    getgenv().NexoConfigs[name] = {
+    if not ConfigStore then ConfigStore = {} _G.NexoConfigs = ConfigStore end
+    ConfigStore[name] = {
         Aimbot = Config.Aimbot,
         Triggerbot = Config.Triggerbot,
         Ragebot = Config.Ragebot,
@@ -126,12 +98,11 @@ local function SaveConfig(name)
         ESP = Config.ESP,
         Movement = Config.Movement,
     }
-    print("[Nexo] Config saved: " .. name)
 end
 
 local function LoadConfig(name)
     name = name or Config.Settings.ConfigName
-    local data = getgenv().NexoConfigs and getgenv().NexoConfigs[name]
+    local data = ConfigStore and ConfigStore[name]
     if data then
         for k, v in pairs(data) do
             if Config[k] then
@@ -140,236 +111,90 @@ local function LoadConfig(name)
                 end
             end
         end
-        FOVCircle.Radius = Config.Aimbot.FOV
-        print("[Nexo] Config loaded: " .. name)
-    else
-        print("[Nexo] Config not found: " .. name)
+        if FOVCircle then FOVCircle.Radius = Config.Aimbot.FOV end
     end
 end
 
--- ============================================================
--- STREAMPROOF WINDOW INIT
--- ============================================================
-local function InitStreamWindow()
-    if StreamWindow then return end
-    local success, result = pcall(function()
-        local win = Drawing.new("Window")
-        win.Size = Camera.ViewportSize
-        win.Position = Vector2.new(0, 0)
-        win.Transparency = 1
-        win.Visible = false
-        return win
-    end)
-    if success then
-        StreamWindow = result
-        WindowSupported = true
-    else
-        WindowSupported = false
-        warn("[Nexo] Streamproof Window not supported – falling back to normal ESP.")
-    end
-end
-
--- ============================================================
--- ESP DRAWING (supports both modes)
--- ============================================================
-local function CreateEspObject(player)
-    -- Only used in non-streamproof mode
-    if Config.ESP.Streamproof then return end
-    if EspObjects[player] then
-        for _, o in pairs(EspObjects[player]) do
-            pcall(o.Remove, o)
+local function GetConfigNames()
+    local names = {"Default"}
+    if ConfigStore then
+        for name in pairs(ConfigStore) do
+            table.insert(names, name)
         end
+    end
+    return names
+end
+
+local function CreateEspObject(player)
+    if EspObjects[player] then
+        for _, o in pairs(EspObjects[player]) do pcall(o.Remove, o) end
         EspObjects[player] = nil
     end
     local objs = {}
     if Config.ESP.Boxes then
-        local b = Drawing.new("Square")
-        b.Visible = false
-        b.Thickness = 1
-        b.Transparency = 0.5
-        table.insert(objs, b)
+        local b = SafeDraw("Square")
+        if b then b.Visible = false; b.Thickness = 1; b.Transparency = 0.5; table.insert(objs, b) end
     end
     if Config.ESP.Names then
-        local n = Drawing.new("Text")
-        n.Visible = false
-        n.Size = 14
-        n.Center = true
-        n.Outline = true
-        n.OutlineColor = Color3.new(0,0,0)
-        table.insert(objs, n)
+        local n = SafeDraw("Text")
+        if n then n.Visible = false; n.Size = 14; n.Center = true; n.Outline = true; n.OutlineColor = Color3.new(0,0,0); table.insert(objs, n) end
     end
     if Config.ESP.Distance then
-        local d = Drawing.new("Text")
-        d.Visible = false
-        d.Size = 12
-        d.Center = true
-        d.Outline = true
-        d.OutlineColor = Color3.new(0,0,0)
-        table.insert(objs, d)
+        local d = SafeDraw("Text")
+        if d then d.Visible = false; d.Size = 12; d.Center = true; d.Outline = true; d.OutlineColor = Color3.new(0,0,0); table.insert(objs, d) end
     end
     if Config.ESP.Health then
-        local hbg = Drawing.new("Square")
-        hbg.Visible = false
-        hbg.Color = Color3.new(0,0,0)
-        hbg.Thickness = 1
-        hbg.Filled = true
-        hbg.Transparency = 0.5
-        table.insert(objs, hbg)
-        local hbar = Drawing.new("Square")
-        hbar.Visible = false
-        hbar.Color = Color3.new(0,1,0)
-        hbar.Thickness = 1
-        hbar.Filled = true
-        hbar.Transparency = 0.3
-        table.insert(objs, hbar)
+        local hbg = SafeDraw("Square")
+        if hbg then hbg.Visible = false; hbg.Color = Color3.new(0,0,0); hbg.Thickness = 1; hbg.Filled = true; hbg.Transparency = 0.5; table.insert(objs, hbg) end
+        local hbar = SafeDraw("Square")
+        if hbar then hbar.Visible = false; hbar.Color = Color3.new(0,1,0); hbar.Thickness = 1; hbar.Filled = true; hbar.Transparency = 0.3; table.insert(objs, hbar) end
     end
     EspObjects[player] = objs
 end
 
-local function DrawOnWindow()
-    if not StreamWindow or not StreamWindow.Visible then return end
-    StreamWindow:Clear(Color3.new(0,0,0), 1)  -- transparent clear
-
-    local char = LocalPlayer.Character
-    if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-        local c = player.Character
-        if not c then continue end
-        local hum = c:FindFirstChild("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
-        local rp = c:FindFirstChild("HumanoidRootPart")
-        local hp = c:FindFirstChild("Head")
-        if not rp or not hp then continue end
-
-        local dist = (rp.Position - root.Position).Magnitude
-        if dist > Config.ESP.MaxDistance * 10 then continue end
-
-        local hScreen, hOn = IsOnScreen(hp.Position)
-        local rScreen, rOn = IsOnScreen(rp.Position)
-        if not hOn or not rOn then continue end
-
-        local color = GetPlayerColor(player)
-        local height = math.abs(hScreen.Y - rScreen.Y) * 2.2
-        local width = height * 0.55
-        local top = Vector2.new(rScreen.X - width/2, hScreen.Y - height*0.15)
-
-        -- Box
-        if Config.ESP.Boxes then
-            StreamWindow:DrawRectangle(top, Vector2.new(width, height), color, 1, false)  -- outline
-        end
-        -- Name
-        if Config.ESP.Names then
-            StreamWindow:DrawText(
-                player.Name,
-                Vector2.new(rScreen.X, hScreen.Y - height*0.25 - 16),
-                14,
-                color,
-                true,  -- center
-                Color3.new(0,0,0),  -- outline color
-                true   -- outline
-            )
-        end
-        -- Distance
-        if Config.ESP.Distance then
-            StreamWindow:DrawText(
-                math.round(dist/10) .. "m",
-                Vector2.new(rScreen.X, rScreen.Y + height*0.55),
-                12,
-                color,
-                true,
-                Color3.new(0,0,0),
-                true
-            )
-        end
-        -- Health bar
-        if Config.ESP.Health then
-            local bw = width * 0.7
-            local bh = 4
-            local bp = Vector2.new(rScreen.X - bw/2, rScreen.Y + height*0.48)
-            local hpct = hum.Health / hum.MaxHealth
-            StreamWindow:DrawRectangle(bp, Vector2.new(bw, bh), Color3.new(0,0,0), 0.5, true)  -- background
-            StreamWindow:DrawRectangle(bp, Vector2.new(bw * hpct, bh), Color3.new(1-hpct, hpct, 0), 0.3, true)  -- fill
-        end
-    end
-end
-
 local function UpdateESP()
-    esp_counter = esp_counter + 1
-    if esp_counter % 2 ~= 0 then return end
-
-    -- Streamproof mode uses separate window
-    if Config.ESP.Streamproof then
-        if not StreamWindow then InitStreamWindow() end
-        if StreamWindow then
-            StreamWindow.Visible = Config.ESP.Enabled
-            if Config.ESP.Enabled then
-                DrawOnWindow()
-            end
-        end
-        -- Hide normal drawing objects (they shouldn't exist but just in case)
-        for _, objs in pairs(EspObjects) do
-            for _, o in pairs(objs) do
-                if o then o.Visible = false end
-            end
-        end
-        return
-    end
-
-    -- Non-streamproof (normal Drawing objects)
     if not Config.ESP.Enabled then
         for _, objs in pairs(EspObjects) do
-            for _, o in pairs(objs) do
-                if o then o.Visible = false end
-            end
+            for _, o in pairs(objs) do if o then o.Visible = false end end
         end
         return
     end
-
     local char = LocalPlayer.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
-
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
         local c = player.Character
         if not c then continue end
         local hum = c:FindFirstChild("Humanoid")
         if not hum or hum.Health <= 0 then continue end
-
         if not EspObjects[player] then CreateEspObject(player) end
         local objs = EspObjects[player]
         if not objs then continue end
-
         local rp = c:FindFirstChild("HumanoidRootPart")
         local hp = c:FindFirstChild("Head")
-        if not rp or not hp then continue end
-
+        if not rp or not hp then
+            for _, o in pairs(objs) do if o then o.Visible = false end end
+            continue
+        end
         local dist = (rp.Position - root.Position).Magnitude
         if dist > Config.ESP.MaxDistance * 10 then
             for _, o in pairs(objs) do if o then o.Visible = false end end
             continue
         end
-
         local _, on = IsOnScreen(rp.Position)
         if not on then
             for _, o in pairs(objs) do if o then o.Visible = false end end
             continue
         end
-
         local color = GetPlayerColor(player)
         local hPos, hOn = IsOnScreen(hp.Position)
         local rPos, rOn = IsOnScreen(rp.Position)
         if not hOn or not rOn then continue end
-
         local height = math.abs(hPos.Y - rPos.Y) * 2.2
         local width = height * 0.55
         local top = Vector2.new(rPos.X - width/2, hPos.Y - height*0.15)
-
         local idx = 1
         if Config.ESP.Boxes and objs[idx] then
             local box = objs[idx]
@@ -421,7 +246,6 @@ local function UpdateESP()
     end
 end
 
--- Aimbot
 local function GetTargets()
     local targets = {}
     local char = LocalPlayer.Character
@@ -455,13 +279,7 @@ local function GetTargets()
         local screenDist = (Vector2.new(v.X, v.Y) - mousePos).Magnitude
         if screenDist > Config.Aimbot.FOV then continue end
         if math.random(1,100) > Config.Aimbot.HitChance then continue end
-        table.insert(targets, {
-            Player = player,
-            Character = c,
-            AimPart = part,
-            Distance = dist,
-            ScreenDist = screenDist,
-        })
+        table.insert(targets, { AimPart = part, ScreenDist = screenDist })
     end
     table.sort(targets, function(a,b) return a.ScreenDist < b.ScreenDist end)
     return targets
@@ -480,7 +298,6 @@ local function AimAt(target)
     end
 end
 
--- Triggerbot
 local triggerDelay = 0
 local function Triggerbot()
     if not Config.Triggerbot.Enabled then return end
@@ -508,7 +325,6 @@ local function Triggerbot()
     end
 end
 
--- Ragebot
 local function Ragebot()
     if not Config.Ragebot.Enabled then return end
     local targets = GetTargets()
@@ -519,9 +335,8 @@ local function Ragebot()
     end
 end
 
--- Orbit
 local orbitAngle = 0
-local orbitTask
+local orbitTask = nil
 local function StartOrbit()
     if orbitTask then orbitTask:Disconnect() end
     orbitTask = RunService.RenderStepped:Connect(function(dt)
@@ -550,8 +365,7 @@ local function StartOrbit()
     end)
 end
 
--- Voidspam
-local voidTask
+local voidTask = nil
 local function StartVoidspam()
     if voidTask then voidTask:Disconnect() end
     voidTask = RunService.RenderStepped:Connect(function()
@@ -564,8 +378,7 @@ local function StartVoidspam()
     end)
 end
 
--- Movement
-local speedTask
+local speedTask = nil
 local function StartSpeed()
     if speedTask then speedTask:Disconnect() end
     speedTask = RunService.Heartbeat:Connect(function()
@@ -577,7 +390,7 @@ local function StartSpeed()
     end)
 end
 
-local flyTask
+local flyTask = nil
 local function StartFlight()
     if flyTask then flyTask:Disconnect() end
     flyTask = RunService.RenderStepped:Connect(function()
@@ -586,13 +399,10 @@ local function StartFlight()
         local root = char:FindFirstChild("HumanoidRootPart")
         local hum = char:FindFirstChild("Humanoid")
         if not root or not hum then return end
-
-        -- Clean up when flight is disabled
         if not Config.Movement.Flight then
             hum.PlatformStand = false
             return
         end
-
         hum.PlatformStand = true
         local move = Vector3.new()
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + Camera.CFrame.LookVector * Vector3.new(1,0,1) end
@@ -610,197 +420,33 @@ local function StartFlight()
     end)
 end
 
--- ============================================================
--- UI SYSTEM (unchanged except for dropdown clipping fix)
--- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = CoreGui
 
-local function MakeLabel(text, parent, size, pos, color, align)
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = size or UDim2.new(1,0,0,20)
-    lbl.Position = pos or UDim2.new(0,0,0,0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = text
-    lbl.TextColor3 = color or Color3.fromRGB(255,255,255)
-    lbl.TextSize = 14
-    lbl.Font = Enum.Font.Code
-    lbl.TextXAlignment = align or Enum.TextXAlignment.Left
-    lbl.Parent = parent
-    return lbl
+local BG = Color3.fromRGB(18,18,18)
+local SectionBG = Color3.fromRGB(26,26,26)
+local Border = Color3.fromRGB(255,255,255)
+local TextColor = Color3.fromRGB(255,255,255)
+local Accent = Color3.fromRGB(220,220,220)
+local ToggleOn = Color3.fromRGB(255,255,255)
+local ToggleOff = Color3.fromRGB(60,60,60)
+
+local function safeFont()
+    local success, result = pcall(function() return Enum.Font.Gotham end)
+    if success then return Enum.Font.Gotham else return Enum.Font.SourceSans end
 end
+local FONT = safeFont()
 
-local function MakeButton(text, parent, size, pos, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = size or UDim2.new(1,0,0,25)
-    btn.Position = pos or UDim2.new(0,0,0,0)
-    btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    btn.BorderColor3 = Color3.fromRGB(50,50,50)
-    btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 13
-    btn.Font = Enum.Font.Code
-    btn.Parent = parent
-    btn.MouseButton1Click:Connect(callback)
-    return btn
-end
-
-local function MakeToggle(parent, label, getter, setter)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1,0,0,25)
-    frame.BackgroundTransparency = 1
-    frame.Parent = parent
-
-    local lbl = MakeLabel(label, frame, UDim2.new(0.7,0,1,0), UDim2.new(0,0,0,0))
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0,50,0,20)
-    btn.Position = UDim2.new(0.7,0,0.5,-10)
-    btn.BackgroundColor3 = getter() and Color3.fromRGB(247,54,219) or Color3.fromRGB(40,40,40)
-    btn.BorderColor3 = Color3.fromRGB(50,50,50)
-    btn.Text = getter() and "ON" or "OFF"
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 12
-    btn.Font = Enum.Font.Code
-    btn.Parent = frame
-    btn.MouseButton1Click:Connect(function()
-        setter(not getter())
-        btn.BackgroundColor3 = getter() and Color3.fromRGB(247,54,219) or Color3.fromRGB(40,40,40)
-        btn.Text = getter() and "ON" or "OFF"
-    end)
-end
-
-local function MakeSlider(parent, label, getter, setter, min, max)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1,0,0,35)
-    frame.BackgroundTransparency = 1
-    frame.Parent = parent
-
-    local lbl = MakeLabel(label .. ": " .. tostring(getter()), frame, UDim2.new(1,0,0,15), UDim2.new(0,0,0,0))
-    local input = Instance.new("TextBox")
-    input.Size = UDim2.new(0.8,0,0,18)
-    input.Position = UDim2.new(0.1,0,0,17)
-    input.BackgroundColor3 = Color3.fromRGB(30,30,30)
-    input.BorderColor3 = Color3.fromRGB(50,50,50)
-    input.Text = tostring(getter())
-    input.TextColor3 = Color3.fromRGB(255,255,255)
-    input.TextSize = 12
-    input.Font = Enum.Font.Code
-    input.ClearTextOnFocus = false
-    input.Parent = frame
-    input.FocusLost:Connect(function(enter)
-        if enter then
-            local v = tonumber(input.Text)
-            if v then
-                v = math.clamp(v, min or 0, max or 1)
-                setter(v)
-                lbl.Text = label .. ": " .. tostring(v)
-            end
-            input.Text = tostring(getter())
-        end
-    end)
-end
-
-local function MakeDropdown(parent, label, values, getter, setter)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1,0,0,30)
-    frame.BackgroundTransparency = 1
-    frame.Parent = parent
-
-    local lbl = MakeLabel(label, frame, UDim2.new(0.5,0,1,0), UDim2.new(0,0,0,0))
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.4,0,0,22)
-    btn.Position = UDim2.new(0.5,0,0.5,-11)
-    btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    btn.BorderColor3 = Color3.fromRGB(50,50,50)
-    btn.Text = tostring(getter())
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 12
-    btn.Font = Enum.Font.Code
-    btn.Parent = frame
-
-    local list = Instance.new("Frame")
-    list.Size = UDim2.new(0.4,0,0, #values*20)
-    list.Position = UDim2.new(0.5,0,1,0)
-    list.BackgroundColor3 = Color3.fromRGB(25,25,25)
-    list.BorderColor3 = Color3.fromRGB(50,50,50)
-    list.Visible = false
-    list.ZIndex = 2
-    list.Parent = frame
-
-    for _, v in pairs(values) do
-        local opt = Instance.new("TextButton")
-        opt.Size = UDim2.new(1,0,0,20)
-        opt.BackgroundColor3 = Color3.fromRGB(35,35,35)
-        opt.Text = v
-        opt.TextColor3 = Color3.fromRGB(255,255,255)
-        opt.TextSize = 12
-        opt.Font = Enum.Font.Code
-        opt.Parent = list
-        opt.MouseButton1Click:Connect(function()
-            setter(v)
-            btn.Text = v
-            list.Visible = false
-        end)
-    end
-
-    btn.MouseButton1Click:Connect(function()
-        list.Visible = not list.Visible
-    end)
-end
-
-local function MakeKeyPicker(parent, label, getter, setter)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1,0,0,25)
-    frame.BackgroundTransparency = 1
-    frame.Parent = parent
-
-    local lbl = MakeLabel(label, frame, UDim2.new(0.6,0,1,0), UDim2.new(0,0,0,0))
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.3,0,0,20)
-    btn.Position = UDim2.new(0.6,0,0.5,-10)
-    btn.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    btn.BorderColor3 = Color3.fromRGB(50,50,50)
-    btn.Text = getter()
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.TextSize = 12
-    btn.Font = Enum.Font.Code
-    btn.Parent = frame
-
-    btn.MouseButton1Click:Connect(function()
-        btn.Text = "..."
-        local conn
-        conn = UserInputService.InputBegan:Connect(function(i)
-            local key
-            if i.UserInputType == Enum.UserInputType.Keyboard then
-                key = i.KeyCode.Name
-            elseif i.UserInputType == Enum.UserInputType.MouseButton1 then
-                key = "MB1"
-            elseif i.UserInputType == Enum.UserInputType.MouseButton2 then
-                key = "MB2"
-            else
-                return
-            end
-            setter(key)
-            btn.Text = key
-            conn:Disconnect()
-        end)
-    end)
-end
-
--- ============================================================
--- MAIN WINDOW
--- ============================================================
 local MainWindow = Instance.new("Frame")
-MainWindow.Size = UDim2.new(0, 650, 0, 550)
-MainWindow.Position = UDim2.new(0.5, -325, 0.5, -275)
+MainWindow.Size = UDim2.new(0, 820, 0, 580)
+MainWindow.Position = UDim2.new(0.5, -410, 0.5, -290)
 MainWindow.AnchorPoint = Vector2.new(0.5, 0.5)
-MainWindow.BackgroundColor3 = Color3.fromRGB(28,28,28)
-MainWindow.BorderColor3 = Color3.fromRGB(247,54,219)
+MainWindow.BackgroundColor3 = BG
+MainWindow.BorderColor3 = Border
 MainWindow.BorderSizePixel = 2
 MainWindow.Visible = false
 MainWindow.Parent = ScreenGui
 
--- Drag
 local dragging, dragStart, dragPos
 MainWindow.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -819,261 +465,461 @@ UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
 end)
 
--- Title bar
 local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1,0,0,30)
-titleBar.BackgroundColor3 = Color3.fromRGB(247,54,219)
-titleBar.BackgroundTransparency = 0.2
+titleBar.Size = UDim2.new(1,0,0,32)
+titleBar.BackgroundColor3 = SectionBG
+titleBar.BorderColor3 = Border
+titleBar.BorderSizePixel = 1
 titleBar.Parent = MainWindow
 
 local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1,0,1,0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "Nexo v1.0 (Fixed) | discord.gg/XV6HcW5Nn"
-titleLbl.TextColor3 = Color3.fromRGB(255,255,255)
-titleLbl.TextSize = 16
-titleLbl.Font = Enum.Font.Code
+titleLbl.Text = "NEXO"
+titleLbl.TextColor3 = TextColor
+titleLbl.TextSize = 20
+titleLbl.Font = FONT
 titleLbl.TextXAlignment = Enum.TextXAlignment.Center
 titleLbl.Parent = titleBar
 
--- Tab bar
 local tabContainer = Instance.new("Frame")
-tabContainer.Size = UDim2.new(1,0,0,30)
-tabContainer.Position = UDim2.new(0,0,0,30)
-tabContainer.BackgroundColor3 = Color3.fromRGB(35,35,35)
+tabContainer.Size = UDim2.new(1,0,0,34)
+tabContainer.Position = UDim2.new(0,0,0,32)
+tabContainer.BackgroundColor3 = BG
+tabContainer.BorderColor3 = Border
+tabContainer.BorderSizePixel = 1
 tabContainer.Parent = MainWindow
 
-local tabs = {}
-local currentTabIndex = 1
+local tabData = {}
 
-local function AddTab(name)
-    local idx = #tabs + 1
+local function CreateTab(name)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 80, 1, 0)
-    btn.Position = UDim2.new((idx-1) * 0.12, 0, 0, 0)
+    btn.Size = UDim2.new(0.25,0,1,0)
+    btn.Position = UDim2.new(#tabData * 0.25,0,0,0)
     btn.BackgroundTransparency = 1
     btn.Text = name
-    btn.TextColor3 = Color3.fromRGB(200,200,200)
-    btn.TextSize = 14
-    btn.Font = Enum.Font.Code
+    btn.TextColor3 = TextColor
+    btn.TextSize = 16
+    btn.Font = FONT
     btn.Parent = tabContainer
 
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -20, 1, -20)
-    frame.Position = UDim2.new(0, 10, 0, 10)
+    local frame = Instance.new("ScrollingFrame")
+    frame.Size = UDim2.new(1,0,1,-66)
+    frame.Position = UDim2.new(0,0,0,66)
     frame.BackgroundTransparency = 1
-    frame.Visible = (idx == 1)
+    frame.CanvasSize = UDim2.new(0,0,0,0)
+    frame.ScrollBarThickness = 6
+    frame.BorderSizePixel = 0
+    frame.Visible = (#tabData == 0)
     frame.Parent = MainWindow
 
     local layout = Instance.new("UIListLayout")
     layout.Parent = frame
     layout.FillDirection = Enum.FillDirection.Horizontal
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.Padding = UDim.new(0, 10)
+    layout.Padding = UDim.new(0,12)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-    local function showTab()
-        for i, f in pairs(tabs) do
-            f.frame.Visible = (i == idx)
-            f.button.BackgroundTransparency = (i == idx) and 0.3 or 1
-            f.button.TextColor3 = (i == idx) and Color3.fromRGB(247,54,219) or Color3.fromRGB(200,200,200)
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        frame.CanvasSize = UDim2.new(0,0,0, layout.AbsoluteContentSize.Y + 10)
+    end)
+
+    table.insert(tabData, { button = btn, frame = frame })
+
+    btn.MouseButton1Click:Connect(function()
+        for _, data in pairs(tabData) do
+            data.frame.Visible = false
+            data.button.TextColor3 = TextColor
         end
-        currentTabIndex = idx
-    end
+        frame.Visible = true
+        btn.TextColor3 = Accent
+    end)
 
-    btn.MouseButton1Click:Connect(showTab)
-    table.insert(tabs, { button = btn, frame = frame, show = showTab })
-    return frame
+    return frame, layout
 end
 
 local function AddGroupbox(parent, title)
     local container = Instance.new("Frame")
-    container.Size = UDim2.new(0.48, 0, 1, 0)
+    container.Size = UDim2.new(0.48,0,1,0)
     container.BackgroundTransparency = 1
     container.Parent = parent
 
     local box = Instance.new("Frame")
     box.Size = UDim2.new(1,0,0,200)
-    box.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    box.BorderColor3 = Color3.fromRGB(50,50,50)
-    box.BorderMode = Enum.BorderMode.Inset
+    box.BackgroundColor3 = SectionBG
+    box.BorderColor3 = Border
+    box.BorderSizePixel = 1
     box.Parent = container
 
     local inner = Instance.new("Frame")
     inner.Size = UDim2.new(1,-2,1,-2)
     inner.Position = UDim2.new(0,1,0,1)
-    inner.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    inner.BackgroundColor3 = SectionBG
     inner.Parent = box
 
     local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1,0,0,20)
+    lbl.Size = UDim2.new(1,0,0,24)
     lbl.Position = UDim2.new(0,4,0,2)
     lbl.BackgroundTransparency = 1
     lbl.Text = title
-    lbl.TextColor3 = Color3.fromRGB(247,54,219)
-    lbl.TextSize = 14
-    lbl.Font = Enum.Font.Code
+    lbl.TextColor3 = Accent
+    lbl.TextSize = 15
+    lbl.Font = FONT
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Parent = inner
 
     local content = Instance.new("Frame")
-    content.Size = UDim2.new(1,-8,1,-24)
-    content.Position = UDim2.new(0,4,0,22)
+    content.Size = UDim2.new(1,-8,1,-28)
+    content.Position = UDim2.new(0,4,0,24)
     content.BackgroundTransparency = 1
-    content.ClipsDescendants = true   -- FIX: prevents dropdown overflow
+    content.ClipsDescendants = true
     content.Parent = inner
 
-    local layout = Instance.new("UIListLayout")
-    layout.Parent = content
-    layout.Padding = UDim.new(0,4)
-    layout.FillDirection = Enum.FillDirection.Vertical
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    local contentLayout = Instance.new("UIListLayout")
+    contentLayout.Parent = content
+    contentLayout.Padding = UDim.new(0,2)
+    contentLayout.FillDirection = Enum.FillDirection.Vertical
+    contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
     local function resize()
-        local h = 22 + layout.AbsoluteContentSize.Y + 4
+        local h = 24 + contentLayout.AbsoluteContentSize.Y + 6
         box.Size = UDim2.new(1,0,0,h)
     end
-    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
+    contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
     task.wait()
     resize()
 
-    return content
+    local function addControl(control)
+        control.Parent = content
+        return control
+    end
+
+    local function addToggle(label, getter, setter)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1,0,0,24)
+        frame.BackgroundTransparency = 1
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.6,0,1,0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = TextColor
+        lbl.TextSize = 13
+        lbl.Font = FONT
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = frame
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.3,0,0,20)
+        btn.Position = UDim2.new(0.7,0,0.5,-10)
+        btn.BackgroundColor3 = getter() and ToggleOn or ToggleOff
+        btn.BorderColor3 = Border
+        btn.BorderSizePixel = 1
+        btn.Text = getter() and "ON" or "OFF"
+        btn.TextColor3 = getter() and BG or TextColor
+        btn.TextSize = 12
+        btn.Font = FONT
+        btn.Parent = frame
+        btn.MouseButton1Click:Connect(function()
+            setter(not getter())
+            btn.BackgroundColor3 = getter() and ToggleOn or ToggleOff
+            btn.Text = getter() and "ON" or "OFF"
+            btn.TextColor3 = getter() and BG or TextColor
+            SaveConfig()
+        end)
+
+        addControl(frame)
+    end
+
+    local function addSlider(label, getter, setter, min, max)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1,0,0,34)
+        frame.BackgroundTransparency = 1
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1,0,0,14)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label .. ": " .. tostring(getter())
+        lbl.TextColor3 = TextColor
+        lbl.TextSize = 13
+        lbl.Font = FONT
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = frame
+
+        local input = Instance.new("TextBox")
+        input.Size = UDim2.new(0.8,0,0,18)
+        input.Position = UDim2.new(0.1,0,0,14)
+        input.BackgroundColor3 = BG
+        input.BorderColor3 = Border
+        input.BorderSizePixel = 1
+        input.Text = tostring(getter())
+        input.TextColor3 = TextColor
+        input.TextSize = 12
+        input.Font = FONT
+        input.ClearTextOnFocus = false
+        input.Parent = frame
+        input.FocusLost:Connect(function(enter)
+            if enter then
+                local v = tonumber(input.Text)
+                if v then
+                    v = math.clamp(v, min or 0, max or 1)
+                    setter(v)
+                    lbl.Text = label .. ": " .. tostring(v)
+                    SaveConfig()
+                end
+                input.Text = tostring(getter())
+            end
+        end)
+
+        addControl(frame)
+    end
+
+    local function addDropdown(label, values, getter, setter)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1,0,0,30)
+        frame.BackgroundTransparency = 1
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.5,0,1,0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = TextColor
+        lbl.TextSize = 13
+        lbl.Font = FONT
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = frame
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.4,0,0,22)
+        btn.Position = UDim2.new(0.5,0,0.5,-11)
+        btn.BackgroundColor3 = BG
+        btn.BorderColor3 = Border
+        btn.BorderSizePixel = 1
+        btn.Text = tostring(getter())
+        btn.TextColor3 = TextColor
+        btn.TextSize = 12
+        btn.Font = FONT
+        btn.Parent = frame
+
+        local list = Instance.new("Frame")
+        list.Size = UDim2.new(0.4,0,0, #values*20)
+        list.Position = UDim2.new(0.5,0,1,0)
+        list.BackgroundColor3 = BG
+        list.BorderColor3 = Border
+        list.BorderSizePixel = 1
+        list.Visible = false
+        list.ZIndex = 2
+        list.Parent = frame
+
+        for _, v in pairs(values) do
+            local opt = Instance.new("TextButton")
+            opt.Size = UDim2.new(1,0,0,20)
+            opt.BackgroundColor3 = SectionBG
+            opt.BorderColor3 = Border
+            opt.BorderSizePixel = 1
+            opt.Text = v
+            opt.TextColor3 = TextColor
+            opt.TextSize = 12
+            opt.Font = FONT
+            opt.Parent = list
+            opt.MouseButton1Click:Connect(function()
+                setter(v)
+                btn.Text = v
+                list.Visible = false
+                SaveConfig()
+            end)
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            list.Visible = not list.Visible
+        end)
+
+        addControl(frame)
+    end
+
+    local function addKeyPicker(label, getter, setter)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1,0,0,24)
+        frame.BackgroundTransparency = 1
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.6,0,1,0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = TextColor
+        lbl.TextSize = 13
+        lbl.Font = FONT
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = frame
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.3,0,0,20)
+        btn.Position = UDim2.new(0.7,0,0.5,-10)
+        btn.BackgroundColor3 = BG
+        btn.BorderColor3 = Border
+        btn.BorderSizePixel = 1
+        btn.Text = getter()
+        btn.TextColor3 = TextColor
+        btn.TextSize = 12
+        btn.Font = FONT
+        btn.Parent = frame
+
+        btn.MouseButton1Click:Connect(function()
+            btn.Text = "..."
+            local conn
+            conn = UserInputService.InputBegan:Connect(function(i)
+                local key
+                if i.UserInputType == Enum.UserInputType.Keyboard then
+                    key = i.KeyCode.Name
+                elseif i.UserInputType == Enum.UserInputType.MouseButton1 then
+                    key = "MB1"
+                elseif i.UserInputType == Enum.UserInputType.MouseButton2 then
+                    key = "MB2"
+                else
+                    return
+                end
+                setter(key)
+                btn.Text = key
+                conn:Disconnect()
+                SaveConfig()
+            end)
+        end)
+
+        addControl(frame)
+    end
+
+    local function addButton(label, callback)
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1,0,0,28)
+        frame.BackgroundTransparency = 1
+
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1,-4,0,22)
+        btn.Position = UDim2.new(0,2,0,3)
+        btn.BackgroundColor3 = BG
+        btn.BorderColor3 = Border
+        btn.BorderSizePixel = 1
+        btn.Text = label
+        btn.TextColor3 = TextColor
+        btn.TextSize = 13
+        btn.Font = FONT
+        btn.Parent = frame
+        btn.MouseButton1Click:Connect(callback)
+
+        addControl(frame)
+    end
+
+    return {
+        addToggle = addToggle,
+        addSlider = addSlider,
+        addDropdown = addDropdown,
+        addKeyPicker = addKeyPicker,
+        addButton = addButton,
+    }
 end
 
--- ============================================================
--- BUILD UI (Tabs & Groupboxes)
--- ============================================================
-local tabAimbot = AddTab("Aimbot")
-local gAimbot = AddGroupbox(tabAimbot, "Aimbot")   -- left
-local gTrigger = AddGroupbox(tabAimbot, "Triggerbot") -- right
-local gRage = AddGroupbox(tabAimbot, "Ragebot")
-local gOrbit = AddGroupbox(tabAimbot, "Orbit")
-local gVoid = AddGroupbox(tabAimbot, "Voidspam")
+local combatFrame, combatLayout = CreateTab("Combat")
+local gAimbot = AddGroupbox(combatFrame, "Aimbot")
+gAimbot.addToggle("Enable Aimbot", function() return Config.Aimbot.Enabled end, function(v) Config.Aimbot.Enabled = v end)
+gAimbot.addToggle("Silent Aim", function() return Config.Aimbot.Silent end, function(v) Config.Aimbot.Silent = v end)
+gAimbot.addToggle("Show FOV", function() return Config.Aimbot.ShowFOV end, function(v) Config.Aimbot.ShowFOV = v end)
+gAimbot.addToggle("Team Check", function() return Config.Aimbot.TeamCheck end, function(v) Config.Aimbot.TeamCheck = v end)
+gAimbot.addToggle("Visibility Check", function() return Config.Aimbot.VisibilityCheck end, function(v) Config.Aimbot.VisibilityCheck = v end)
+gAimbot.addKeyPicker("Aimbot Key", function() return Config.Aimbot.Keybind end, function(v) Config.Aimbot.Keybind = v end)
+gAimbot.addSlider("Smoothness", function() return Config.Aimbot.Smoothness end, function(v) Config.Aimbot.Smoothness = v end, 0, 0.95)
+gAimbot.addSlider("FOV", function() return Config.Aimbot.FOV end, function(v) Config.Aimbot.FOV = v; if FOVCircle then FOVCircle.Radius = v end end, 30, 500)
+gAimbot.addSlider("Hit Chance %", function() return Config.Aimbot.HitChance end, function(v) Config.Aimbot.HitChance = v end, 1, 100)
+gAimbot.addDropdown("Aim Part", {"Head","UpperTorso","HumanoidRootPart"}, function() return Config.Aimbot.AimPart end, function(v) Config.Aimbot.AimPart = v end)
 
--- Aimbot group
-MakeToggle(gAimbot, "Enable Aimbot", function() return Config.Aimbot.Enabled end, function(v) Config.Aimbot.Enabled = v; SaveConfig() end)
-MakeToggle(gAimbot, "Silent Aim", function() return Config.Aimbot.Silent end, function(v) Config.Aimbot.Silent = v; SaveConfig() end)
-MakeToggle(gAimbot, "Show FOV", function() return Config.Aimbot.ShowFOV end, function(v) Config.Aimbot.ShowFOV = v; SaveConfig() end)
-MakeToggle(gAimbot, "Team Check", function() return Config.Aimbot.TeamCheck end, function(v) Config.Aimbot.TeamCheck = v; SaveConfig() end)
-MakeToggle(gAimbot, "Visibility Check", function() return Config.Aimbot.VisibilityCheck end, function(v) Config.Aimbot.VisibilityCheck = v; SaveConfig() end)
-MakeKeyPicker(gAimbot, "Aimbot Key", function() return Config.Aimbot.Keybind end, function(v) Config.Aimbot.Keybind = v; SaveConfig() end)
-MakeSlider(gAimbot, "Smoothness", function() return Config.Aimbot.Smoothness end, function(v) Config.Aimbot.Smoothness = v; SaveConfig() end, 0, 0.95)
-MakeSlider(gAimbot, "FOV", function() return Config.Aimbot.FOV end, function(v) Config.Aimbot.FOV = v; FOVCircle.Radius = v; SaveConfig() end, 30, 500)
-MakeSlider(gAimbot, "Hit Chance %", function() return Config.Aimbot.HitChance end, function(v) Config.Aimbot.HitChance = v; SaveConfig() end, 1, 100)
-MakeDropdown(gAimbot, "Aim Part", {"Head","UpperTorso","HumanoidRootPart"}, function() return Config.Aimbot.AimPart end, function(v) Config.Aimbot.AimPart = v; SaveConfig() end)
+local gTrigger = AddGroupbox(combatFrame, "Triggerbot")
+gTrigger.addToggle("Enable Triggerbot", function() return Config.Triggerbot.Enabled end, function(v) Config.Triggerbot.Enabled = v end)
+gTrigger.addKeyPicker("Trigger Key", function() return Config.Triggerbot.Keybind end, function(v) Config.Triggerbot.Keybind = v end)
+gTrigger.addDropdown("Target Part", {"Head","UpperTorso","HumanoidRootPart"}, function() return Config.Triggerbot.AimPart end, function(v) Config.Triggerbot.AimPart = v end)
+gTrigger.addSlider("Reaction Time (ms)", function() return Config.Triggerbot.ReactionTime*1000 end, function(v) Config.Triggerbot.ReactionTime = v/1000 end, 10, 500)
 
--- Triggerbot group
-MakeToggle(gTrigger, "Enable Triggerbot", function() return Config.Triggerbot.Enabled end, function(v) Config.Triggerbot.Enabled = v; SaveConfig() end)
-MakeKeyPicker(gTrigger, "Trigger Key", function() return Config.Triggerbot.Keybind end, function(v) Config.Triggerbot.Keybind = v; SaveConfig() end)
-MakeDropdown(gTrigger, "Target Part", {"Head","UpperTorso","HumanoidRootPart"}, function() return Config.Triggerbot.AimPart end, function(v) Config.Triggerbot.AimPart = v; SaveConfig() end)
-MakeSlider(gTrigger, "Reaction Time (ms)", function() return Config.Triggerbot.ReactionTime*1000 end, function(v) Config.Triggerbot.ReactionTime = v/1000; SaveConfig() end, 10, 500)
+local gRage = AddGroupbox(combatFrame, "Ragebot")
+gRage.addToggle("Enable Ragebot", function() return Config.Ragebot.Enabled end, function(v) Config.Ragebot.Enabled = v end)
 
--- Ragebot group
-MakeToggle(gRage, "Enable Ragebot", function() return Config.Ragebot.Enabled end, function(v) Config.Ragebot.Enabled = v; SaveConfig() end)
+local gOrbit = AddGroupbox(combatFrame, "Orbit")
+gOrbit.addToggle("Enable Orbit", function() return Config.Orbit.Enabled end, function(v) Config.Orbit.Enabled = v; if v then StartOrbit() end end)
+gOrbit.addSlider("Speed", function() return Config.Orbit.Speed end, function(v) Config.Orbit.Speed = v end, 0.5, 5)
+gOrbit.addSlider("Radius", function() return Config.Orbit.Radius end, function(v) Config.Orbit.Radius = v end, 5, 50)
+gOrbit.addSlider("Height", function() return Config.Orbit.Height end, function(v) Config.Orbit.Height = v end, -10, 20)
 
--- Orbit group
-MakeToggle(gOrbit, "Enable Orbit", function() return Config.Orbit.Enabled end, function(v) Config.Orbit.Enabled = v; if v then StartOrbit() end; SaveConfig() end)
-MakeSlider(gOrbit, "Speed", function() return Config.Orbit.Speed end, function(v) Config.Orbit.Speed = v; SaveConfig() end, 0.5, 5)
-MakeSlider(gOrbit, "Radius", function() return Config.Orbit.Radius end, function(v) Config.Orbit.Radius = v; SaveConfig() end, 5, 50)
-MakeSlider(gOrbit, "Height", function() return Config.Orbit.Height end, function(v) Config.Orbit.Height = v; SaveConfig() end, -10, 20)
+local gVoid = AddGroupbox(combatFrame, "Voidspam")
+gVoid.addToggle("Enable Voidspam", function() return Config.Voidspam.Enabled end, function(v) Config.Voidspam.Enabled = v; if v then StartVoidspam() end end)
+gVoid.addSlider("Speed (Hz)", function() return Config.Voidspam.Speed end, function(v) Config.Voidspam.Speed = v end, 0.1, 2)
 
--- Voidspam group
-MakeToggle(gVoid, "Enable Voidspam", function() return Config.Voidspam.Enabled end, function(v) Config.Voidspam.Enabled = v; if v then StartVoidspam() end; SaveConfig() end)
-MakeSlider(gVoid, "Speed (Hz)", function() return Config.Voidspam.Speed end, function(v) Config.Voidspam.Speed = v; SaveConfig() end, 0.1, 2)
+local espFrame, espLayout = CreateTab("ESP")
+local gESP = AddGroupbox(espFrame, "ESP")
+gESP.addToggle("Enable ESP", function() return Config.ESP.Enabled end, function(v) Config.ESP.Enabled = v end)
+gESP.addToggle("Box ESP", function() return Config.ESP.Boxes end, function(v) Config.ESP.Boxes = v end)
+gESP.addToggle("Names", function() return Config.ESP.Names end, function(v) Config.ESP.Names = v end)
+gESP.addToggle("Health Bars", function() return Config.ESP.Health end, function(v) Config.ESP.Health = v end)
+gESP.addToggle("Distance", function() return Config.ESP.Distance end, function(v) Config.ESP.Distance = v end)
+gESP.addToggle("Team Colors", function() return Config.ESP.TeamColor end, function(v) Config.ESP.TeamColor = v end)
+gESP.addSlider("Max Distance", function() return Config.ESP.MaxDistance end, function(v) Config.ESP.MaxDistance = v end, 100, 1000)
 
--- Tab: ESP
-local tabESP = AddTab("ESP")
-local gESP = AddGroupbox(tabESP, "ESP")
-MakeToggle(gESP, "Enable ESP", function() return Config.ESP.Enabled end, function(v) Config.ESP.Enabled = v; SaveConfig() end)
-MakeToggle(gESP, "Streamproof", function() return Config.ESP.Streamproof end, function(v) Config.ESP.Streamproof = v; if v and not StreamWindow then InitStreamWindow() end; SaveConfig() end)
-MakeToggle(gESP, "Box ESP", function() return Config.ESP.Boxes end, function(v) Config.ESP.Boxes = v; SaveConfig() end)
-MakeToggle(gESP, "Skeleton ESP", function() return Config.ESP.Skeleton end, function(v) Config.ESP.Skeleton = v; SaveConfig() end)  -- not implemented but kept for config
-MakeToggle(gESP, "Names", function() return Config.ESP.Names end, function(v) Config.ESP.Names = v; SaveConfig() end)
-MakeToggle(gESP, "Health Bars", function() return Config.ESP.Health end, function(v) Config.ESP.Health = v; SaveConfig() end)
-MakeToggle(gESP, "Distance", function() return Config.ESP.Distance end, function(v) Config.ESP.Distance = v; SaveConfig() end)
-MakeToggle(gESP, "Team Colors", function() return Config.ESP.TeamColor end, function(v) Config.ESP.TeamColor = v; SaveConfig() end)
-MakeSlider(gESP, "Max Distance", function() return Config.ESP.MaxDistance end, function(v) Config.ESP.MaxDistance = v; SaveConfig() end, 100, 1000)
+local miscFrame, miscLayout = CreateTab("Misc")
+local gMove = AddGroupbox(miscFrame, "Movement")
+gMove.addSlider("Walk Speed", function() return Config.Movement.Speed end, function(v) Config.Movement.Speed = v end, 16, 200)
+gMove.addToggle("Flight", function() return Config.Movement.Flight end, function(v) Config.Movement.Flight = v; if v then StartFlight() end end)
+gMove.addSlider("Fly Speed", function() return Config.Movement.FlySpeed end, function(v) Config.Movement.FlySpeed = v end, 10, 200)
 
--- Tab: Misc
-local tabMisc = AddTab("Misc")
-local gMove = AddGroupbox(tabMisc, "Movement")
-local gSet = AddGroupbox(tabMisc, "Settings")
-
-MakeSlider(gMove, "Walk Speed", function() return Config.Movement.Speed end, function(v) Config.Movement.Speed = v; SaveConfig() end, 16, 200)
-MakeToggle(gMove, "Flight", function() return Config.Movement.Flight end, function(v) Config.Movement.Flight = v; if v then StartFlight() end; SaveConfig() end)
-MakeSlider(gMove, "Fly Speed", function() return Config.Movement.FlySpeed end, function(v) Config.Movement.FlySpeed = v; SaveConfig() end, 10, 200)
-
-MakeDropdown(gSet, "Config", GetConfigNames(), function() return Config.Settings.ConfigName end, function(v) Config.Settings.ConfigName = v; SaveConfig() end)
-MakeButton(gSet, "Save Config", function() SaveConfig(Config.Settings.ConfigName) end)
-MakeButton(gSet, "Load Config", function() LoadConfig(Config.Settings.ConfigName) end)
-MakeButton(gSet, "Delete Config", function()
+local settingsFrame, settingsLayout = CreateTab("Settings")
+local gSet = AddGroupbox(settingsFrame, "Config")
+gSet.addDropdown("Config", GetConfigNames(), function() return Config.Settings.ConfigName end, function(v) Config.Settings.ConfigName = v end)
+gSet.addButton("Save Config", function() SaveConfig(Config.Settings.ConfigName) end)
+gSet.addButton("Load Config", function() LoadConfig(Config.Settings.ConfigName) end)
+gSet.addButton("Delete Config", function()
     if Config.Settings.ConfigName ~= "Default" then
-        getgenv().NexoConfigs[Config.Settings.ConfigName] = nil
-        print("[Nexo] Config deleted")
+        ConfigStore[Config.Settings.ConfigName] = nil
     end
 end)
-MakeToggle(gSet, "Auto-Load", function() return Config.Settings.AutoLoad end, function(v) Config.Settings.AutoLoad = v; SaveConfig() end)
+gSet.addToggle("Auto-Load", function() return Config.Settings.AutoLoad end, function(v) Config.Settings.AutoLoad = v end)
 
--- ============================================================
--- TOGGLE UI
--- ============================================================
 UserInputService.InputBegan:Connect(function(i)
-    if i.KeyCode == Enum.KeyCode.RightShift and not i.IsProcessed then
+    if i.KeyCode == Enum.KeyCode.RightShift then
         MainWindow.Visible = not MainWindow.Visible
     end
 end)
 
--- ============================================================
--- MAIN LOOP
--- ============================================================
 RunService.RenderStepped:Connect(function()
-    -- FOV
-    if Config.Aimbot.Enabled and Config.Aimbot.ShowFOV then
-        local mp = UserInputService:GetMouseLocation()
-        FOVCircle.Position = mp
-        FOVCircle.Visible = true
-        FOVCircle.Radius = Config.Aimbot.FOV
-    else
-        FOVCircle.Visible = false
+    if FOVCircle then
+        if Config.Aimbot.Enabled and Config.Aimbot.ShowFOV then
+            FOVCircle.Position = UserInputService:GetMouseLocation()
+            FOVCircle.Visible = true
+        else
+            FOVCircle.Visible = false
+        end
     end
 
-    -- Aimbot
     if Config.Aimbot.Enabled and UserInputService:IsKeyDown(Enum.KeyCode[Config.Aimbot.Keybind]) then
         local targets = GetTargets()
         if #targets > 0 then AimAt(targets[1]) end
     end
 
-    -- Ragebot
     if Config.Ragebot.Enabled then Ragebot() end
 
-    -- Triggerbot
     if Config.Triggerbot.Enabled and UserInputService:IsKeyDown(Enum.KeyCode[Config.Triggerbot.Keybind]) then
         Triggerbot()
     end
 
-    -- ESP (handles both streamproof and normal)
     UpdateESP()
 end)
 
--- ============================================================
--- INIT
--- ============================================================
 if Config.Settings.AutoLoad then LoadConfig("Default") end
 StartOrbit()
 StartVoidspam()
 StartSpeed()
 StartFlight()
-print("[Nexo] Loaded! Press RightShift to open menu. Streamproof: " .. (WindowSupported and "supported" or "not supported"))
 
--- ============================================================
--- CLEANUP
--- ============================================================
 local function unload()
     if orbitTask then orbitTask:Disconnect() end
     if voidTask then voidTask:Disconnect() end
     if speedTask then speedTask:Disconnect() end
     if flyTask then flyTask:Disconnect() end
-    FOVCircle:Remove()
-    if StreamWindow then StreamWindow:Remove() end
+    if FOVCircle then pcall(FOVCircle.Remove, FOVCircle) end
     for _, objs in pairs(EspObjects) do
         for _, o in pairs(objs) do
             if o then pcall(o.Remove, o) end
