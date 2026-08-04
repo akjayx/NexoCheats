@@ -1,12 +1,23 @@
-task.wait()
+--========================================================
+-- NEXO + LINORIA V2 COMBINED SCRIPT (ONE FILE)
+--========================================================
 
+--// Services
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local Lighting = game:GetService("Lighting")
+
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local Camera = workspace.CurrentCamera
+
+print("Nexo + Linoria V2 Script Loaded")
+
+--========================================================
+-- CONFIG (SHARED TABLE)
+--========================================================
 
 _G.NexoConfigs = _G.NexoConfigs or {}
 local ConfigStore = _G.NexoConfigs
@@ -48,6 +59,10 @@ local Config = {
     Settings = { ConfigName = "Default", AutoLoad = true },
 }
 
+--========================================================
+-- DRAWING / FOV
+--========================================================
+
 local function SafeDraw(type)
     local ok, obj = pcall(Drawing.new, type)
     if ok and obj then return obj end
@@ -56,7 +71,7 @@ end
 
 local FOVCircle = SafeDraw("Circle")
 if FOVCircle then
-    FOVCircle.Visible = false
+    FOVCircle.Visible = Config.Aimbot.ShowFOV
     FOVCircle.Color = Color3.fromRGB(255,255,255)
     FOVCircle.Thickness = 1
     FOVCircle.NumSides = 32
@@ -68,7 +83,8 @@ local EspObjects = {}
 
 local function IsOnScreen(pos)
     local vp = Camera:WorldToViewportPoint(pos)
-    return Vector2.new(vp.X * Camera.ViewportSize.X, vp.Y * Camera.ViewportSize.Y), (vp.Z > 0 and vp.X >= 0 and vp.X <= 1 and vp.Y >= 0 and vp.Y <= 1)
+    return Vector2.new(vp.X * Camera.ViewportSize.X, vp.Y * Camera.ViewportSize.Y),
+        (vp.Z > 0 and vp.X >= 0 and vp.X <= 1 and vp.Y >= 0 and vp.Y <= 1)
 end
 
 local function GetPlayerColor(player)
@@ -86,6 +102,10 @@ local function TriggerClick()
     end)
 end
 
+--========================================================
+-- CONFIG SAVE / LOAD
+--========================================================
+
 local function SaveConfig(name)
     name = name or Config.Settings.ConfigName
     if not ConfigStore then ConfigStore = {} _G.NexoConfigs = ConfigStore end
@@ -97,6 +117,7 @@ local function SaveConfig(name)
         Voidspam = Config.Voidspam,
         ESP = Config.ESP,
         Movement = Config.Movement,
+        Settings = Config.Settings,
     }
 end
 
@@ -111,7 +132,10 @@ local function LoadConfig(name)
                 end
             end
         end
-        if FOVCircle then FOVCircle.Radius = Config.Aimbot.FOV end
+        if FOVCircle then
+            FOVCircle.Radius = Config.Aimbot.FOV
+            FOVCircle.Visible = Config.Aimbot.ShowFOV
+        end
     end
 end
 
@@ -124,6 +148,10 @@ local function GetConfigNames()
     end
     return names
 end
+
+--========================================================
+-- ESP
+--========================================================
 
 local function CreateEspObject(player)
     if EspObjects[player] then
@@ -246,6 +274,10 @@ local function UpdateESP()
     end
 end
 
+--========================================================
+-- AIMBOT / TARGETING
+--========================================================
+
 local function GetTargets()
     local targets = {}
     local char = LocalPlayer.Character
@@ -298,6 +330,10 @@ local function AimAt(target)
     end
 end
 
+--========================================================
+-- TRIGGERBOT / RAGEBOT
+--========================================================
+
 local triggerDelay = 0
 local function Triggerbot()
     if not Config.Triggerbot.Enabled then return end
@@ -334,6 +370,10 @@ local function Ragebot()
         Camera.CFrame = CFrame.new(Camera.CFrame.Position, pos)
     end
 end
+
+--========================================================
+-- ORBIT / VOIDSPAM / MOVEMENT / FLIGHT
+--========================================================
 
 local orbitAngle = 0
 local orbitTask = nil
@@ -420,511 +460,386 @@ local function StartFlight()
     end)
 end
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = CoreGui
-
-local BG = Color3.fromRGB(18,18,18)
-local SectionBG = Color3.fromRGB(26,26,26)
-local Border = Color3.fromRGB(255,255,255)
-local TextColor = Color3.fromRGB(255,255,255)
-local Accent = Color3.fromRGB(220,220,220)
-local ToggleOn = Color3.fromRGB(255,255,255)
-local ToggleOff = Color3.fromRGB(60,60,60)
-
-local function safeFont()
-    local success, result = pcall(function() return Enum.Font.Gotham end)
-    if success then return Enum.Font.Gotham else return Enum.Font.SourceSans end
-end
-local FONT = safeFont()
-
-local MainWindow = Instance.new("Frame")
-MainWindow.Size = UDim2.new(0, 750, 0, 600)
-MainWindow.Position = UDim2.new(0.5, -375, 0.5, -300)
-MainWindow.AnchorPoint = Vector2.new(0.5, 0.5)
-MainWindow.BackgroundColor3 = BG
-MainWindow.BorderColor3 = Border
-MainWindow.BorderSizePixel = 2
-MainWindow.Visible = false
-MainWindow.Parent = ScreenGui
-
-local dragging, dragStart, dragPos
-MainWindow.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = i.Position
-        dragPos = MainWindow.Position
-    end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = i.Position - dragStart
-        MainWindow.Position = UDim2.new(dragPos.X.Scale, dragPos.X.Offset + delta.X, dragPos.Y.Scale, dragPos.Y.Offset + delta.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-end)
-
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1,0,0,32)
-titleBar.BackgroundColor3 = SectionBG
-titleBar.BorderColor3 = Border
-titleBar.BorderSizePixel = 1
-titleBar.Parent = MainWindow
-
-local titleLbl = Instance.new("TextLabel")
-titleLbl.Size = UDim2.new(1,0,1,0)
-titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "NEXO"
-titleLbl.TextColor3 = TextColor
-titleLbl.TextSize = 20
-titleLbl.Font = FONT
-titleLbl.TextXAlignment = Enum.TextXAlignment.Center
-titleLbl.Parent = titleBar
-
-local tabContainer = Instance.new("Frame")
-tabContainer.Size = UDim2.new(1,0,0,34)
-tabContainer.Position = UDim2.new(0,0,0,32)
-tabContainer.BackgroundColor3 = BG
-tabContainer.BorderColor3 = Border
-tabContainer.BorderSizePixel = 1
-tabContainer.Parent = MainWindow
-
-local tabData = {}
-
-local function CreateTab(name)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.25,0,1,0)
-    btn.Position = UDim2.new(#tabData * 0.25,0,0,0)
-    btn.BackgroundTransparency = 1
-    btn.Text = name
-    btn.TextColor3 = TextColor
-    btn.TextSize = 16
-    btn.Font = FONT
-    btn.Parent = tabContainer
-
-    local frame = Instance.new("ScrollingFrame")
-    frame.Size = UDim2.new(1,-10,1,-66)
-    frame.Position = UDim2.new(0,5,0,66)
-    frame.BackgroundTransparency = 1
-    frame.CanvasSize = UDim2.new(0,0,0,0)
-    frame.ScrollBarThickness = 6
-    frame.BorderSizePixel = 0
-    frame.Visible = (#tabData == 0)
-    frame.Parent = MainWindow
-
-    local layout = Instance.new("UIListLayout")
-    layout.Parent = frame
-    layout.FillDirection = Enum.FillDirection.Vertical
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.Padding = UDim.new(0,10)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-
-    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        frame.CanvasSize = UDim2.new(0,0,0, layout.AbsoluteContentSize.Y + 10)
-    end)
-
-    table.insert(tabData, { button = btn, frame = frame })
-
-    btn.MouseButton1Click:Connect(function()
-        for _, data in pairs(tabData) do
-            data.frame.Visible = false
-            data.button.TextColor3 = TextColor
-        end
-        frame.Visible = true
-        btn.TextColor3 = Accent
-    end)
-
-    return frame, layout
-end
-
-local function AddGroupbox(parent, title)
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1,-10,0,0)
-    container.BackgroundTransparency = 1
-    container.Parent = parent
-
-    local box = Instance.new("Frame")
-    box.Size = UDim2.new(1,0,0,200)
-    box.BackgroundColor3 = SectionBG
-    box.BorderColor3 = Border
-    box.BorderSizePixel = 1
-    box.Parent = container
-
-    local inner = Instance.new("Frame")
-    inner.Size = UDim2.new(1,-2,1,-2)
-    inner.Position = UDim2.new(0,1,0,1)
-    inner.BackgroundColor3 = SectionBG
-    inner.Parent = box
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1,0,0,24)
-    lbl.Position = UDim2.new(0,4,0,2)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = title
-    lbl.TextColor3 = Accent
-    lbl.TextSize = 15
-    lbl.Font = FONT
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = inner
-
-    local content = Instance.new("Frame")
-    content.Size = UDim2.new(1,-8,1,-28)
-    content.Position = UDim2.new(0,4,0,24)
-    content.BackgroundTransparency = 1
-    content.ClipsDescendants = true
-    content.Parent = inner
-
-    local contentLayout = Instance.new("UIListLayout")
-    contentLayout.Parent = content
-    contentLayout.Padding = UDim.new(0,2)
-    contentLayout.FillDirection = Enum.FillDirection.Vertical
-    contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-    local function resize()
-        local h = 24 + contentLayout.AbsoluteContentSize.Y + 6
-        box.Size = UDim2.new(1,0,0,h)
-    end
-    contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
-    task.wait()
-    resize()
-
-    local function addControl(control)
-        control.Parent = content
-        return control
-    end
-
-    local function addToggle(label, getter, setter)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1,0,0,24)
-        frame.BackgroundTransparency = 1
-
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0.6,0,1,0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = label
-        lbl.TextColor3 = TextColor
-        lbl.TextSize = 13
-        lbl.Font = FONT
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.3,0,0,20)
-        btn.Position = UDim2.new(0.7,0,0.5,-10)
-        btn.BackgroundColor3 = getter() and ToggleOn or ToggleOff
-        btn.BorderColor3 = Border
-        btn.BorderSizePixel = 1
-        btn.Text = getter() and "ON" or "OFF"
-        btn.TextColor3 = getter() and BG or TextColor
-        btn.TextSize = 12
-        btn.Font = FONT
-        btn.Parent = frame
-        btn.MouseButton1Click:Connect(function()
-            setter(not getter())
-            btn.BackgroundColor3 = getter() and ToggleOn or ToggleOff
-            btn.Text = getter() and "ON" or "OFF"
-            btn.TextColor3 = getter() and BG or TextColor
-            SaveConfig()
-        end)
-
-        addControl(frame)
-    end
-
-    local function addSlider(label, getter, setter, min, max)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1,0,0,34)
-        frame.BackgroundTransparency = 1
-
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1,0,0,14)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = label .. ": " .. tostring(getter())
-        lbl.TextColor3 = TextColor
-        lbl.TextSize = 13
-        lbl.Font = FONT
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.Parent = frame
-
-        local input = Instance.new("TextBox")
-        input.Size = UDim2.new(0.8,0,0,18)
-        input.Position = UDim2.new(0.1,0,0,14)
-        input.BackgroundColor3 = BG
-        input.BorderColor3 = Border
-        input.BorderSizePixel = 1
-        input.Text = tostring(getter())
-        input.TextColor3 = TextColor
-        input.TextSize = 12
-        input.Font = FONT
-        input.ClearTextOnFocus = false
-        input.Parent = frame
-        input.FocusLost:Connect(function(enter)
-            if enter then
-                local v = tonumber(input.Text)
-                if v then
-                    v = math.clamp(v, min or 0, max or 1)
-                    setter(v)
-                    lbl.Text = label .. ": " .. tostring(v)
-                    SaveConfig()
-                end
-                input.Text = tostring(getter())
-            end
-        end)
-
-        addControl(frame)
-    end
-
-    local function addDropdown(label, values, getter, setter)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1,0,0,30)
-        frame.BackgroundTransparency = 1
-
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0.5,0,1,0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = label
-        lbl.TextColor3 = TextColor
-        lbl.TextSize = 13
-        lbl.Font = FONT
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.4,0,0,22)
-        btn.Position = UDim2.new(0.5,0,0.5,-11)
-        btn.BackgroundColor3 = BG
-        btn.BorderColor3 = Border
-        btn.BorderSizePixel = 1
-        btn.Text = tostring(getter())
-        btn.TextColor3 = TextColor
-        btn.TextSize = 12
-        btn.Font = FONT
-        btn.Parent = frame
-
-        local list = Instance.new("Frame")
-        list.Size = UDim2.new(0.4,0,0, #values*20)
-        list.Position = UDim2.new(0.5,0,1,0)
-        list.BackgroundColor3 = BG
-        list.BorderColor3 = Border
-        list.BorderSizePixel = 1
-        list.Visible = false
-        list.ZIndex = 2
-        list.Parent = frame
-
-        for _, v in pairs(values) do
-            local opt = Instance.new("TextButton")
-            opt.Size = UDim2.new(1,0,0,20)
-            opt.BackgroundColor3 = SectionBG
-            opt.BorderColor3 = Border
-            opt.BorderSizePixel = 1
-            opt.Text = v
-            opt.TextColor3 = TextColor
-            opt.TextSize = 12
-            opt.Font = FONT
-            opt.Parent = list
-            opt.MouseButton1Click:Connect(function()
-                setter(v)
-                btn.Text = v
-                list.Visible = false
-                SaveConfig()
-            end)
-        end
-
-        btn.MouseButton1Click:Connect(function()
-            list.Visible = not list.Visible
-        end)
-
-        addControl(frame)
-    end
-
-    local function addKeyPicker(label, getter, setter)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1,0,0,24)
-        frame.BackgroundTransparency = 1
-
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(0.6,0,1,0)
-        lbl.BackgroundTransparency = 1
-        lbl.Text = label
-        lbl.TextColor3 = TextColor
-        lbl.TextSize = 13
-        lbl.Font = FONT
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.Parent = frame
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.3,0,0,20)
-        btn.Position = UDim2.new(0.7,0,0.5,-10)
-        btn.BackgroundColor3 = BG
-        btn.BorderColor3 = Border
-        btn.BorderSizePixel = 1
-        btn.Text = getter()
-        btn.TextColor3 = TextColor
-        btn.TextSize = 12
-        btn.Font = FONT
-        btn.Parent = frame
-
-        btn.MouseButton1Click:Connect(function()
-            btn.Text = "..."
-            local conn
-            conn = UserInputService.InputBegan:Connect(function(i)
-                local key
-                if i.UserInputType == Enum.UserInputType.Keyboard then
-                    key = i.KeyCode.Name
-                elseif i.UserInputType == Enum.UserInputType.MouseButton1 then
-                    key = "MB1"
-                elseif i.UserInputType == Enum.UserInputType.MouseButton2 then
-                    key = "MB2"
-                else
-                    return
-                end
-                setter(key)
-                btn.Text = key
-                conn:Disconnect()
-                SaveConfig()
-            end)
-        end)
-
-        addControl(frame)
-    end
-
-    local function addButton(label, callback)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1,0,0,28)
-        frame.BackgroundTransparency = 1
-
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1,-4,0,22)
-        btn.Position = UDim2.new(0,2,0,3)
-        btn.BackgroundColor3 = BG
-        btn.BorderColor3 = Border
-        btn.BorderSizePixel = 1
-        btn.Text = label
-        btn.TextColor3 = TextColor
-        btn.TextSize = 13
-        btn.Font = FONT
-        btn.Parent = frame
-        btn.MouseButton1Click:Connect(callback)
-
-        addControl(frame)
-    end
-
-    return {
-        addToggle = addToggle,
-        addSlider = addSlider,
-        addDropdown = addDropdown,
-        addKeyPicker = addKeyPicker,
-        addButton = addButton,
-    }
-end
-
-local combatFrame, combatLayout = CreateTab("Combat")
-local gAimbot = AddGroupbox(combatFrame, "Aimbot")
-gAimbot.addToggle("Enable Aimbot", function() return Config.Aimbot.Enabled end, function(v) Config.Aimbot.Enabled = v end)
-gAimbot.addToggle("Silent Aim", function() return Config.Aimbot.Silent end, function(v) Config.Aimbot.Silent = v end)
-gAimbot.addToggle("Show FOV", function() return Config.Aimbot.ShowFOV end, function(v) Config.Aimbot.ShowFOV = v end)
-gAimbot.addToggle("Team Check", function() return Config.Aimbot.TeamCheck end, function(v) Config.Aimbot.TeamCheck = v end)
-gAimbot.addToggle("Visibility Check", function() return Config.Aimbot.VisibilityCheck end, function(v) Config.Aimbot.VisibilityCheck = v end)
-gAimbot.addKeyPicker("Aimbot Key", function() return Config.Aimbot.Keybind end, function(v) Config.Aimbot.Keybind = v end)
-gAimbot.addSlider("Smoothness", function() return Config.Aimbot.Smoothness end, function(v) Config.Aimbot.Smoothness = v end, 0, 0.95)
-gAimbot.addSlider("FOV", function() return Config.Aimbot.FOV end, function(v) Config.Aimbot.FOV = v; if FOVCircle then FOVCircle.Radius = v end end, 30, 500)
-gAimbot.addSlider("Hit Chance %", function() return Config.Aimbot.HitChance end, function(v) Config.Aimbot.HitChance = v end, 1, 100)
-gAimbot.addDropdown("Aim Part", {"Head","UpperTorso","HumanoidRootPart"}, function() return Config.Aimbot.AimPart end, function(v) Config.Aimbot.AimPart = v end)
-
-local gTrigger = AddGroupbox(combatFrame, "Triggerbot")
-gTrigger.addToggle("Enable Triggerbot", function() return Config.Triggerbot.Enabled end, function(v) Config.Triggerbot.Enabled = v end)
-gTrigger.addKeyPicker("Trigger Key", function() return Config.Triggerbot.Keybind end, function(v) Config.Triggerbot.Keybind = v end)
-gTrigger.addDropdown("Target Part", {"Head","UpperTorso","HumanoidRootPart"}, function() return Config.Triggerbot.AimPart end, function(v) Config.Triggerbot.AimPart = v end)
-gTrigger.addSlider("Reaction Time (ms)", function() return Config.Triggerbot.ReactionTime*1000 end, function(v) Config.Triggerbot.ReactionTime = v/1000 end, 10, 500)
-
-local gRage = AddGroupbox(combatFrame, "Ragebot")
-gRage.addToggle("Enable Ragebot", function() return Config.Ragebot.Enabled end, function(v) Config.Ragebot.Enabled = v end)
-
-local gOrbit = AddGroupbox(combatFrame, "Orbit")
-gOrbit.addToggle("Enable Orbit", function() return Config.Orbit.Enabled end, function(v) Config.Orbit.Enabled = v; if v then StartOrbit() end end)
-gOrbit.addSlider("Speed", function() return Config.Orbit.Speed end, function(v) Config.Orbit.Speed = v end, 0.5, 5)
-gOrbit.addSlider("Radius", function() return Config.Orbit.Radius end, function(v) Config.Orbit.Radius = v end, 5, 50)
-gOrbit.addSlider("Height", function() return Config.Orbit.Height end, function(v) Config.Orbit.Height = v end, -10, 20)
-
-local gVoid = AddGroupbox(combatFrame, "Voidspam")
-gVoid.addToggle("Enable Voidspam", function() return Config.Voidspam.Enabled end, function(v) Config.Voidspam.Enabled = v; if v then StartVoidspam() end end)
-gVoid.addSlider("Speed (Hz)", function() return Config.Voidspam.Speed end, function(v) Config.Voidspam.Speed = v end, 0.1, 2)
-
-local espFrame, espLayout = CreateTab("ESP")
-local gESP = AddGroupbox(espFrame, "ESP")
-gESP.addToggle("Enable ESP", function() return Config.ESP.Enabled end, function(v) Config.ESP.Enabled = v end)
-gESP.addToggle("Box ESP", function() return Config.ESP.Boxes end, function(v) Config.ESP.Boxes = v end)
-gESP.addToggle("Names", function() return Config.ESP.Names end, function(v) Config.ESP.Names = v end)
-gESP.addToggle("Health Bars", function() return Config.ESP.Health end, function(v) Config.ESP.Health = v end)
-gESP.addToggle("Distance", function() return Config.ESP.Distance end, function(v) Config.ESP.Distance = v end)
-gESP.addToggle("Team Colors", function() return Config.ESP.TeamColor end, function(v) Config.ESP.TeamColor = v end)
-gESP.addSlider("Max Distance", function() return Config.ESP.MaxDistance end, function(v) Config.ESP.MaxDistance = v end, 100, 1000)
-
-local miscFrame, miscLayout = CreateTab("Misc")
-local gMove = AddGroupbox(miscFrame, "Movement")
-gMove.addSlider("Walk Speed", function() return Config.Movement.Speed end, function(v) Config.Movement.Speed = v end, 16, 200)
-gMove.addToggle("Flight", function() return Config.Movement.Flight end, function(v) Config.Movement.Flight = v; if v then StartFlight() end end)
-gMove.addSlider("Fly Speed", function() return Config.Movement.FlySpeed end, function(v) Config.Movement.FlySpeed = v end, 10, 200)
-
-local settingsFrame, settingsLayout = CreateTab("Settings")
-local gSet = AddGroupbox(settingsFrame, "Config")
-gSet.addDropdown("Config", GetConfigNames(), function() return Config.Settings.ConfigName end, function(v) Config.Settings.ConfigName = v end)
-gSet.addButton("Save Config", function() SaveConfig(Config.Settings.ConfigName) end)
-gSet.addButton("Load Config", function() LoadConfig(Config.Settings.ConfigName) end)
-gSet.addButton("Delete Config", function()
-    if Config.Settings.ConfigName ~= "Default" then
-        ConfigStore[Config.Settings.ConfigName] = nil
-    end
-end)
-gSet.addToggle("Auto-Load", function() return Config.Settings.AutoLoad end, function(v) Config.Settings.AutoLoad = v end)
-
-UserInputService.InputBegan:Connect(function(i)
-    if i.KeyCode == Enum.KeyCode.RightShift then
-        MainWindow.Visible = not MainWindow.Visible
-    end
-end)
+--========================================================
+-- MAIN LOOP (AIMBOT / ESP / TRIGGER / RAGE)
+--========================================================
 
 RunService.RenderStepped:Connect(function()
-    if FOVCircle then
-        if Config.Aimbot.Enabled and Config.Aimbot.ShowFOV then
-            FOVCircle.Position = UserInputService:GetMouseLocation()
-            FOVCircle.Visible = true
-        else
-            FOVCircle.Visible = false
+    UpdateESP()
+    Triggerbot()
+    Ragebot()
+
+    if Config.Aimbot.Enabled then
+        local targets = GetTargets()
+        if #targets > 0 then
+            AimAt(targets[1])
         end
     end
 
-    if Config.Aimbot.Enabled and UserInputService:IsKeyDown(Enum.KeyCode[Config.Aimbot.Keybind]) then
-        local targets = GetTargets()
-        if #targets > 0 then AimAt(targets[1]) end
+    if FOVCircle then
+        local mousePos = UserInputService:GetMouseLocation()
+        FOVCircle.Position = mousePos
+        FOVCircle.Visible = Config.Aimbot.ShowFOV
     end
-
-    if Config.Ragebot.Enabled then Ragebot() end
-
-    if Config.Triggerbot.Enabled and UserInputService:IsKeyDown(Enum.KeyCode[Config.Triggerbot.Keybind]) then
-        Triggerbot()
-    end
-
-    UpdateESP()
 end)
 
-if Config.Settings.AutoLoad then LoadConfig("Default") end
-StartOrbit()
-StartVoidspam()
 StartSpeed()
 StartFlight()
+StartOrbit()
+StartVoidspam()
 
-local function unload()
-    if orbitTask then orbitTask:Disconnect() end
-    if voidTask then voidTask:Disconnect() end
-    if speedTask then speedTask:Disconnect() end
-    if flyTask then flyTask:Disconnect() end
-    if FOVCircle then pcall(FOVCircle.Remove, FOVCircle) end
-    for _, objs in pairs(EspObjects) do
-        for _, o in pairs(objs) do
-            if o then pcall(o.Remove, o) end
-        end
+--========================================================
+-- LINORIA V2 UI (TABBOXES)
+--========================================================
+
+-- NOTE: You must replace this with your actual Linoria V2 loader.
+-- Example (you fill in the URL or loader you use):
+-- local Library = loadstring(game:HttpGet("YOUR_LINORIA_V2_URL_HERE"))()
+-- local ThemeManager = loadstring(game:HttpGet("YOUR_THEME_MANAGER_URL_HERE"))()
+-- local SaveManager = loadstring(game:HttpGet("YOUR_SAVE_MANAGER_URL_HERE"))()
+
+local Library = require(...) -- put your Linoria V2 library here
+local Window = Library:CreateWindow({
+    Title = "RIVALS ULTIMATE",
+    Center = true,
+    AutoShow = true,
+})
+
+-- Combat Tab
+local CombatTab = Window:AddTab("Combat")
+local CombatTabbox = CombatTab:AddTabbox("Combat Modes")
+local SilentTab = CombatTabbox:AddTab("Silent Aim")
+local TriggerTab = CombatTabbox:AddTab("Triggerbot")
+local RageTabbox = CombatTab:AddTabbox("Rage")
+local RageTab = RageTabbox:AddTab("Ragebot")
+
+-- Visuals Tab
+local VisualsTab = Window:AddTab("Visuals")
+local VisualsTabbox = VisualsTab:AddTabbox("Visuals")
+local ESPTab = VisualsTabbox:AddTab("ESP")
+local FOVTab = VisualsTabbox:AddTab("FOV")
+
+-- Movement Tab
+local MovementTab = Window:AddTab("Movement")
+local MovementTabbox = MovementTab:AddTabbox("Movement")
+local MoveTab = MovementTabbox:AddTab("Movement")
+local OrbitTab = MovementTabbox:AddTab("Orbit")
+local VoidTab = MovementTabbox:AddTab("Voidspam")
+
+-- Config Tab
+local ConfigTab = Window:AddTab("Config")
+local ConfigTabbox = ConfigTab:AddTabbox("Config")
+local ConfigMainTab = ConfigTabbox:AddTab("Main")
+
+-- Silent Aim UI
+SilentTab:AddToggle("SilentAimEnabled", {
+    Text = "Enable Silent Aim",
+    Default = Config.Aimbot.Enabled,
+    Callback = function(v) Config.Aimbot.Enabled = v end
+})
+
+SilentTab:AddToggle("SilentAimSilent", {
+    Text = "Silent Mode",
+    Default = Config.Aimbot.Silent,
+    Callback = function(v) Config.Aimbot.Silent = v end
+})
+
+SilentTab:AddToggle("SilentAimTeamCheck", {
+    Text = "Team Check",
+    Default = Config.Aimbot.TeamCheck,
+    Callback = function(v) Config.Aimbot.TeamCheck = v end
+})
+
+SilentTab:AddToggle("SilentAimVisibility", {
+    Text = "Visibility Check",
+    Default = Config.Aimbot.VisibilityCheck,
+    Callback = function(v) Config.Aimbot.VisibilityCheck = v end
+})
+
+SilentTab:AddDropdown("SilentAimPart", {
+    Text = "Aim Part",
+    Default = Config.Aimbot.AimPart,
+    Values = {"Head", "HumanoidRootPart"},
+    Callback = function(v) Config.Aimbot.AimPart = v end
+})
+
+SilentTab:AddSlider("SilentAimFOV", {
+    Text = "FOV",
+    Default = Config.Aimbot.FOV,
+    Min = 10,
+    Max = 600,
+    Rounding = 0,
+    Callback = function(v)
+        Config.Aimbot.FOV = v
+        if FOVCircle then FOVCircle.Radius = v end
     end
-    ScreenGui:Destroy()
+})
+
+SilentTab:AddSlider("SilentAimSmooth", {
+    Text = "Smoothness",
+    Default = Config.Aimbot.Smoothness,
+    Min = 0,
+    Max = 1,
+    Rounding = 2,
+    Callback = function(v) Config.Aimbot.Smoothness = v end
+})
+
+SilentTab:AddSlider("SilentAimHitChance", {
+    Text = "Hit Chance",
+    Default = Config.Aimbot.HitChance,
+    Min = 1,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(v) Config.Aimbot.HitChance = v end
+})
+
+SilentTab:AddToggle("SilentAimShowFOV", {
+    Text = "Show FOV Circle",
+    Default = Config.Aimbot.ShowFOV,
+    Callback = function(v)
+        Config.Aimbot.ShowFOV = v
+        if FOVCircle then FOVCircle.Visible = v end
+    end
+})
+
+SilentTab:AddKeyPicker("SilentAimKey", {
+    Text = "Silent Aim Keybind",
+    Default = Config.Aimbot.Keybind,
+    SyncToggleState = false,
+    Mode = "Hold",
+    Callback = function(key) Config.Aimbot.Keybind = key end
+})
+
+-- Triggerbot UI
+TriggerTab:AddToggle("TriggerbotEnabled", {
+    Text = "Enable Triggerbot",
+    Default = Config.Triggerbot.Enabled,
+    Callback = function(v) Config.Triggerbot.Enabled = v end
+})
+
+TriggerTab:AddDropdown("TriggerbotPart", {
+    Text = "Trigger Part",
+    Default = Config.Triggerbot.AimPart,
+    Values = {"Head", "HumanoidRootPart"},
+    Callback = function(v) Config.Triggerbot.AimPart = v end
+})
+
+TriggerTab:AddSlider("TriggerbotReaction", {
+    Text = "Reaction Time",
+    Default = Config.Triggerbot.ReactionTime,
+    Min = 0,
+    Max = 0.5,
+    Rounding = 3,
+    Callback = function(v) Config.Triggerbot.ReactionTime = v end
+})
+
+TriggerTab:AddKeyPicker("TriggerbotKey", {
+    Text = "Triggerbot Keybind",
+    Default = Config.Triggerbot.Keybind,
+    SyncToggleState = false,
+    Mode = "Hold",
+    Callback = function(key) Config.Triggerbot.Keybind = key end
+})
+
+-- Ragebot UI
+RageTab:AddToggle("RagebotEnabled", {
+    Text = "Enable Ragebot",
+    Default = Config.Ragebot.Enabled,
+    Callback = function(v) Config.Ragebot.Enabled = v end
+})
+
+-- ESP UI
+ESPTab:AddToggle("ESPEnabled", {
+    Text = "Enable ESP",
+    Default = Config.ESP.Enabled,
+    Callback = function(v) Config.ESP.Enabled = v end
+})
+
+ESPTab:AddToggle("ESPBoxes", {
+    Text = "Boxes",
+    Default = Config.ESP.Boxes,
+    Callback = function(v) Config.ESP.Boxes = v end
+})
+
+ESPTab:AddToggle("ESPNames", {
+    Text = "Names",
+    Default = Config.ESP.Names,
+    Callback = function(v) Config.ESP.Names = v end
+})
+
+ESPTab:AddToggle("ESPHealth", {
+    Text = "Health Bar",
+    Default = Config.ESP.Health,
+    Callback = function(v) Config.ESP.Health = v end
+})
+
+ESPTab:AddToggle("ESPDistance", {
+    Text = "Distance",
+    Default = Config.ESP.Distance,
+    Callback = function(v) Config.ESP.Distance = v end
+})
+
+ESPTab:AddToggle("ESPTeamColor", {
+    Text = "Use Team Colors",
+    Default = Config.ESP.TeamColor,
+    Callback = function(v) Config.ESP.TeamColor = v end
+})
+
+ESPTab:AddSlider("ESPMaxDistance", {
+    Text = "Max Distance",
+    Default = Config.ESP.MaxDistance,
+    Min = 50,
+    Max = 2000,
+    Rounding = 0,
+    Callback = function(v) Config.ESP.MaxDistance = v end
+})
+
+ESPTab:AddColorPicker("ESPEnemyColor", {
+    Text = "Enemy Color",
+    Default = Config.ESP.EnemyColor,
+    Callback = function(c) Config.ESP.EnemyColor = c end
+})
+
+ESPTab:AddColorPicker("ESPFriendColor", {
+    Text = "Friend Color",
+    Default = Config.ESP.FriendColor,
+    Callback = function(c) Config.ESP.FriendColor = c end
+})
+
+-- FOV UI
+FOVTab:AddToggle("ShowFOVCircle", {
+    Text = "Show FOV Circle",
+    Default = Config.Aimbot.ShowFOV,
+    Callback = function(v)
+        Config.Aimbot.ShowFOV = v
+        if FOVCircle then FOVCircle.Visible = v end
+    end
+})
+
+FOVTab:AddSlider("FOVRadius", {
+    Text = "FOV Radius",
+    Default = Config.Aimbot.FOV,
+    Min = 10,
+    Max = 600,
+    Rounding = 0,
+    Callback = function(v)
+        Config.Aimbot.FOV = v
+        if FOVCircle then FOVCircle.Radius = v end
+    end
+})
+
+-- Movement UI
+MoveTab:AddSlider("WalkSpeed", {
+    Text = "Walk Speed",
+    Default = Config.Movement.Speed,
+    Min = 16,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(v) Config.Movement.Speed = v end
+})
+
+MoveTab:AddToggle("FlightEnabled", {
+    Text = "Enable Flight",
+    Default = Config.Movement.Flight,
+    Callback = function(v) Config.Movement.Flight = v end
+})
+
+MoveTab:AddSlider("FlySpeed", {
+    Text = "Fly Speed",
+    Default = Config.Movement.FlySpeed,
+    Min = 10,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(v) Config.Movement.FlySpeed = v end
+})
+
+-- Orbit UI
+OrbitTab:AddToggle("OrbitEnabled", {
+    Text = "Enable Orbit",
+    Default = Config.Orbit.Enabled,
+    Callback = function(v)
+        Config.Orbit.Enabled = v
+        if v then StartOrbit() end
+    end
+})
+
+OrbitTab:AddSlider("OrbitSpeed", {
+    Text = "Orbit Speed",
+    Default = Config.Orbit.Speed,
+    Min = 0.5,
+    Max = 10,
+    Rounding = 2,
+    Callback = function(v) Config.Orbit.Speed = v end
+})
+
+OrbitTab:AddSlider("OrbitRadius", {
+    Text = "Orbit Radius",
+    Default = Config.Orbit.Radius,
+    Min = 5,
+    Max = 50,
+    Rounding = 0,
+    Callback = function(v) Config.Orbit.Radius = v end
+})
+
+OrbitTab:AddSlider("OrbitHeight", {
+    Text = "Orbit Height",
+    Default = Config.Orbit.Height,
+    Min = -10,
+    Max = 20,
+    Rounding = 0,
+    Callback = function(v) Config.Orbit.Height = v end
+})
+
+-- Voidspam UI
+VoidTab:AddToggle("VoidspamEnabled", {
+    Text = "Enable Voidspam",
+    Default = Config.Voidspam.Enabled,
+    Callback = function(v)
+        Config.Voidspam.Enabled = v
+        if v then StartVoidspam() end
+    end
+})
+
+VoidTab:AddSlider("VoidspamSpeed", {
+    Text = "Voidspam Speed",
+    Default = Config.Voidspam.Speed,
+    Min = 0.1,
+    Max = 2,
+    Rounding = 2,
+    Callback = function(v) Config.Voidspam.Speed = v end
+})
+
+-- Config UI
+ConfigMainTab:AddInput("ConfigNameInput", {
+    Text = "Config Name",
+    Default = Config.Settings.ConfigName,
+    Callback = function(v) Config.Settings.ConfigName = v end
+})
+
+ConfigMainTab:AddToggle("AutoLoadConfig", {
+    Text = "Auto Load on Inject",
+    Default = Config.Settings.AutoLoad,
+    Callback = function(v) Config.Settings.AutoLoad = v end
+})
+
+ConfigMainTab:AddButton("SaveConfigButton", {
+    Text = "Save Config",
+    Func = function() SaveConfig(Config.Settings.ConfigName) end
+})
+
+ConfigMainTab:AddButton("LoadConfigButton", {
+    Text = "Load Config",
+    Func = function() LoadConfig(Config.Settings.ConfigName) end
+})
+
+ConfigMainTab:AddDropdown("ConfigList", {
+    Text = "Configs",
+    Values = GetConfigNames(),
+    Default = Config.Settings.ConfigName,
+    Callback = function(v) Config.Settings.ConfigName = v end
+})
+
+-- If AutoLoad is enabled, load config on start
+if Config.Settings.AutoLoad then
+    LoadConfig(Config.Settings.ConfigName)
 end
-Library = { OnUnload = unload }
