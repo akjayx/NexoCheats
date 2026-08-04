@@ -438,8 +438,8 @@ end
 local FONT = safeFont()
 
 local MainWindow = Instance.new("Frame")
-MainWindow.Size = UDim2.new(0, 820, 0, 580)
-MainWindow.Position = UDim2.new(0.5, -410, 0.5, -290)
+MainWindow.Size = UDim2.new(0, 750, 0, 600)
+MainWindow.Position = UDim2.new(0.5, -375, 0.5, -300)
 MainWindow.AnchorPoint = Vector2.new(0.5, 0.5)
 MainWindow.BackgroundColor3 = BG
 MainWindow.BorderColor3 = Border
@@ -504,8 +504,8 @@ local function CreateTab(name)
     btn.Parent = tabContainer
 
     local frame = Instance.new("ScrollingFrame")
-    frame.Size = UDim2.new(1,0,1,-66)
-    frame.Position = UDim2.new(0,0,0,66)
+    frame.Size = UDim2.new(1,-10,1,-66)
+    frame.Position = UDim2.new(0,5,0,66)
     frame.BackgroundTransparency = 1
     frame.CanvasSize = UDim2.new(0,0,0,0)
     frame.ScrollBarThickness = 6
@@ -515,9 +515,9 @@ local function CreateTab(name)
 
     local layout = Instance.new("UIListLayout")
     layout.Parent = frame
-    layout.FillDirection = Enum.FillDirection.Horizontal
+    layout.FillDirection = Enum.FillDirection.Vertical
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.Padding = UDim.new(0,12)
+    layout.Padding = UDim.new(0,10)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
 
     layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
@@ -540,7 +540,7 @@ end
 
 local function AddGroupbox(parent, title)
     local container = Instance.new("Frame")
-    container.Size = UDim2.new(0.48,0,1,0)
+    container.Size = UDim2.new(1,-10,0,0)
     container.BackgroundTransparency = 1
     container.Parent = parent
 
