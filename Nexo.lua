@@ -1,5 +1,5 @@
 --[[
-    NEXO – All-in-One Combat Script
+    NEXO – All-in-One Combat Script (FIXED + STREAMPROOF)
     Discord: https://discord.gg/XV6HcW5Nn
     Open UI: RightShift
 ]]
@@ -44,6 +44,7 @@ local Config = {
     Voidspam = { Enabled = false, Speed = 0.5 },
     ESP = {
         Enabled = false,
+        Streamproof = false,          -- NEW: streamproof toggle
         Boxes = true,
         Skeleton = false,
         Names = true,
@@ -59,7 +60,7 @@ local Config = {
 }
 
 -- ============================================================
--- DRAWING OBJECTS
+-- DRAWING OBJECTS & STREAMPROOF WINDOW
 -- ============================================================
 local FOVCircle = Drawing.new("Circle")
 FOVCircle.Visible = false
@@ -68,15 +69,20 @@ FOVCircle.Thickness = 1
 FOVCircle.NumSides = 32
 FOVCircle.Transparency = 0.5
 
-local EspObjects = {}
+local EspObjects = {}       -- only used in non-streamproof mode
 local esp_counter = 0
+
+-- Streamproof overlay window (created only when needed)
+local StreamWindow = nil
+local WindowSupported = false   -- true if Drawing.new("Window") works
 
 -- ============================================================
 -- UTILITY FUNCTIONS
 -- ============================================================
 local function IsOnScreen(pos)
-    local v, on = Camera:WorldToScreenPoint(pos)
-    return v, on
+    local vp = Camera:WorldToViewportPoint(pos)
+    local x, y = vp.X, vp.Y
+    return Vector2.new(x * Camera.ViewportSize.X, y * Camera.ViewportSize.Y), (vp.Z > 0 and x >= 0 and x <= 1 and y >= 0 and y <= 1)
 end
 
 local function GetPlayerColor(player)
@@ -94,6 +100,15 @@ local function GetConfigNames()
         end
     end
     return names
+end
+
+-- Simulate a mouse click for triggerbot
+local function TriggerClick()
+    pcall(function()
+        Mouse:Button1Down()
+        task.wait(0.01)
+        Mouse:Button1Up()
+    end)
 end
 
 -- ============================================================
@@ -133,10 +148,33 @@ local function LoadConfig(name)
 end
 
 -- ============================================================
--- FEATURES
+-- STREAMPROOF WINDOW INIT
 -- ============================================================
--- ESP
+local function InitStreamWindow()
+    if StreamWindow then return end
+    local success, result = pcall(function()
+        local win = Drawing.new("Window")
+        win.Size = Camera.ViewportSize
+        win.Position = Vector2.new(0, 0)
+        win.Transparency = 1
+        win.Visible = false
+        return win
+    end)
+    if success then
+        StreamWindow = result
+        WindowSupported = true
+    else
+        WindowSupported = false
+        warn("[Nexo] Streamproof Window not supported – falling back to normal ESP.")
+    end
+end
+
+-- ============================================================
+-- ESP DRAWING (supports both modes)
+-- ============================================================
 local function CreateEspObject(player)
+    -- Only used in non-streamproof mode
+    if Config.ESP.Streamproof then return end
     if EspObjects[player] then
         for _, o in pairs(EspObjects[player]) do
             pcall(o.Remove, o)
@@ -188,9 +226,100 @@ local function CreateEspObject(player)
     EspObjects[player] = objs
 end
 
+local function DrawOnWindow()
+    if not StreamWindow or not StreamWindow.Visible then return end
+    StreamWindow:Clear(Color3.new(0,0,0), 1)  -- transparent clear
+
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        local c = player.Character
+        if not c then continue end
+        local hum = c:FindFirstChild("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local rp = c:FindFirstChild("HumanoidRootPart")
+        local hp = c:FindFirstChild("Head")
+        if not rp or not hp then continue end
+
+        local dist = (rp.Position - root.Position).Magnitude
+        if dist > Config.ESP.MaxDistance * 10 then continue end
+
+        local hScreen, hOn = IsOnScreen(hp.Position)
+        local rScreen, rOn = IsOnScreen(rp.Position)
+        if not hOn or not rOn then continue end
+
+        local color = GetPlayerColor(player)
+        local height = math.abs(hScreen.Y - rScreen.Y) * 2.2
+        local width = height * 0.55
+        local top = Vector2.new(rScreen.X - width/2, hScreen.Y - height*0.15)
+
+        -- Box
+        if Config.ESP.Boxes then
+            StreamWindow:DrawRectangle(top, Vector2.new(width, height), color, 1, false)  -- outline
+        end
+        -- Name
+        if Config.ESP.Names then
+            StreamWindow:DrawText(
+                player.Name,
+                Vector2.new(rScreen.X, hScreen.Y - height*0.25 - 16),
+                14,
+                color,
+                true,  -- center
+                Color3.new(0,0,0),  -- outline color
+                true   -- outline
+            )
+        end
+        -- Distance
+        if Config.ESP.Distance then
+            StreamWindow:DrawText(
+                math.round(dist/10) .. "m",
+                Vector2.new(rScreen.X, rScreen.Y + height*0.55),
+                12,
+                color,
+                true,
+                Color3.new(0,0,0),
+                true
+            )
+        end
+        -- Health bar
+        if Config.ESP.Health then
+            local bw = width * 0.7
+            local bh = 4
+            local bp = Vector2.new(rScreen.X - bw/2, rScreen.Y + height*0.48)
+            local hpct = hum.Health / hum.MaxHealth
+            StreamWindow:DrawRectangle(bp, Vector2.new(bw, bh), Color3.new(0,0,0), 0.5, true)  -- background
+            StreamWindow:DrawRectangle(bp, Vector2.new(bw * hpct, bh), Color3.new(1-hpct, hpct, 0), 0.3, true)  -- fill
+        end
+    end
+end
+
 local function UpdateESP()
     esp_counter = esp_counter + 1
     if esp_counter % 2 ~= 0 then return end
+
+    -- Streamproof mode uses separate window
+    if Config.ESP.Streamproof then
+        if not StreamWindow then InitStreamWindow() end
+        if StreamWindow then
+            StreamWindow.Visible = Config.ESP.Enabled
+            if Config.ESP.Enabled then
+                DrawOnWindow()
+            end
+        end
+        -- Hide normal drawing objects (they shouldn't exist but just in case)
+        for _, objs in pairs(EspObjects) do
+            for _, o in pairs(objs) do
+                if o then o.Visible = false end
+            end
+        end
+        return
+    end
+
+    -- Non-streamproof (normal Drawing objects)
     if not Config.ESP.Enabled then
         for _, objs in pairs(EspObjects) do
             for _, o in pairs(objs) do
@@ -199,39 +328,48 @@ local function UpdateESP()
         end
         return
     end
+
     local char = LocalPlayer.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
+
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
         local c = player.Character
         if not c then continue end
         local hum = c:FindFirstChild("Humanoid")
         if not hum or hum.Health <= 0 then continue end
+
         if not EspObjects[player] then CreateEspObject(player) end
         local objs = EspObjects[player]
         if not objs then continue end
+
         local rp = c:FindFirstChild("HumanoidRootPart")
         local hp = c:FindFirstChild("Head")
         if not rp or not hp then continue end
+
         local dist = (rp.Position - root.Position).Magnitude
         if dist > Config.ESP.MaxDistance * 10 then
             for _, o in pairs(objs) do if o then o.Visible = false end end
             continue
         end
+
         local _, on = IsOnScreen(rp.Position)
         if not on then
             for _, o in pairs(objs) do if o then o.Visible = false end end
             continue
         end
+
         local color = GetPlayerColor(player)
         local hPos, hOn = IsOnScreen(hp.Position)
         local rPos, rOn = IsOnScreen(rp.Position)
         if not hOn or not rOn then continue end
+
         local height = math.abs(hPos.Y - rPos.Y) * 2.2
         local width = height * 0.55
         local top = Vector2.new(rPos.X - width/2, hPos.Y - height*0.15)
+
         local idx = 1
         if Config.ESP.Boxes and objs[idx] then
             local box = objs[idx]
@@ -303,9 +441,14 @@ local function GetTargets()
         local dist = (part.Position - root.Position).Magnitude
         if dist > 5000 then continue end
         if Config.Aimbot.VisibilityCheck then
-            local ray = Ray.new(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position).Unit * 10000)
-            local hit = workspace:FindPartOnRay(ray, char)
-            if hit and not hit:IsDescendantOf(c) then continue end
+            local rayOrigin = Camera.CFrame.Position
+            local rayDir = (part.Position - rayOrigin).Unit * 10000
+            local raycastParams = RaycastParams.new()
+            raycastParams.FilterDescendantsInstances = {char}
+            local rayResult = workspace:Raycast(rayOrigin, rayDir, raycastParams)
+            if rayResult and rayResult.Instance then
+                if not rayResult.Instance:IsDescendantOf(c) then continue end
+            end
         end
         local v, on = IsOnScreen(part.Position)
         if not on then continue end
@@ -358,7 +501,7 @@ local function Triggerbot()
         local screenDist = (Vector2.new(v.X, v.Y) - mousePos).Magnitude
         if screenDist < 30 then
             if tick() - triggerDelay >= Config.Triggerbot.ReactionTime then
-                mouse1click()
+                TriggerClick()
                 triggerDelay = tick()
             end
         end
@@ -438,13 +581,18 @@ local flyTask
 local function StartFlight()
     if flyTask then flyTask:Disconnect() end
     flyTask = RunService.RenderStepped:Connect(function()
-        if not Config.Movement.Flight then return end
         local char = LocalPlayer.Character
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
         local hum = char:FindFirstChild("Humanoid")
-        if not hum then return end
+        if not root or not hum then return end
+
+        -- Clean up when flight is disabled
+        if not Config.Movement.Flight then
+            hum.PlatformStand = false
+            return
+        end
+
         hum.PlatformStand = true
         local move = Vector3.new()
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + Camera.CFrame.LookVector * Vector3.new(1,0,1) end
@@ -463,12 +611,11 @@ local function StartFlight()
 end
 
 -- ============================================================
--- UI SYSTEM – No external libraries, fully self-contained
+-- UI SYSTEM (unchanged except for dropdown clipping fix)
 -- ============================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = CoreGui
 
--- Helper functions for UI elements
 local function MakeLabel(text, parent, size, pos, color, align)
     local lbl = Instance.new("TextLabel")
     lbl.Size = size or UDim2.new(1,0,0,20)
@@ -653,7 +800,7 @@ MainWindow.BorderSizePixel = 2
 MainWindow.Visible = false
 MainWindow.Parent = ScreenGui
 
--- Make draggable
+-- Drag
 local dragging, dragStart, dragPos
 MainWindow.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -682,7 +829,7 @@ titleBar.Parent = MainWindow
 local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1,0,1,0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "Nexo v1.0  |  discord.gg/XV6HcW5Nn"
+titleLbl.Text = "Nexo v1.0 (Fixed) | discord.gg/XV6HcW5Nn"
 titleLbl.TextColor3 = Color3.fromRGB(255,255,255)
 titleLbl.TextSize = 16
 titleLbl.Font = Enum.Font.Code
@@ -696,16 +843,14 @@ tabContainer.Position = UDim2.new(0,0,0,30)
 tabContainer.BackgroundColor3 = Color3.fromRGB(35,35,35)
 tabContainer.Parent = MainWindow
 
--- We'll store tab data
 local tabs = {}
 local currentTabIndex = 1
 
--- Function to create a tab
 local function AddTab(name)
     local idx = #tabs + 1
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0, 80, 1, 0)
-    btn.Position = UDim2.new((idx-1) * 0.12, 0, 0, 0) -- approximate positioning
+    btn.Position = UDim2.new((idx-1) * 0.12, 0, 0, 0)
     btn.BackgroundTransparency = 1
     btn.Text = name
     btn.TextColor3 = Color3.fromRGB(200,200,200)
@@ -717,17 +862,15 @@ local function AddTab(name)
     frame.Size = UDim2.new(1, -20, 1, -20)
     frame.Position = UDim2.new(0, 10, 0, 10)
     frame.BackgroundTransparency = 1
-    frame.Visible = (idx == 1) -- first tab visible
+    frame.Visible = (idx == 1)
     frame.Parent = MainWindow
 
-    -- Layout for groupboxes (left/right)
     local layout = Instance.new("UIListLayout")
     layout.Parent = frame
     layout.FillDirection = Enum.FillDirection.Horizontal
     layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     layout.Padding = UDim.new(0, 10)
 
-    -- Function to show this tab
     local function showTab()
         for i, f in pairs(tabs) do
             f.frame.Visible = (i == idx)
@@ -738,27 +881,18 @@ local function AddTab(name)
     end
 
     btn.MouseButton1Click:Connect(showTab)
-
-    -- Store tab data
-    table.insert(tabs, {
-        button = btn,
-        frame = frame,
-        show = showTab,
-    })
-
+    table.insert(tabs, { button = btn, frame = frame, show = showTab })
     return frame
 end
 
--- Function to add a groupbox inside a tab frame (left or right)
-local function AddGroupbox(parent, title, side)
-    -- Create a container frame for left or right
+local function AddGroupbox(parent, title)
     local container = Instance.new("Frame")
     container.Size = UDim2.new(0.48, 0, 1, 0)
     container.BackgroundTransparency = 1
     container.Parent = parent
 
     local box = Instance.new("Frame")
-    box.Size = UDim2.new(1,0,0,200) -- will resize dynamically
+    box.Size = UDim2.new(1,0,0,200)
     box.BackgroundColor3 = Color3.fromRGB(20,20,20)
     box.BorderColor3 = Color3.fromRGB(50,50,50)
     box.BorderMode = Enum.BorderMode.Inset
@@ -785,6 +919,7 @@ local function AddGroupbox(parent, title, side)
     content.Size = UDim2.new(1,-8,1,-24)
     content.Position = UDim2.new(0,4,0,22)
     content.BackgroundTransparency = 1
+    content.ClipsDescendants = true   -- FIX: prevents dropdown overflow
     content.Parent = inner
 
     local layout = Instance.new("UIListLayout")
@@ -798,7 +933,7 @@ local function AddGroupbox(parent, title, side)
         box.Size = UDim2.new(1,0,0,h)
     end
     layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(resize)
-    task.wait() -- force initial layout
+    task.wait()
     resize()
 
     return content
@@ -807,13 +942,12 @@ end
 -- ============================================================
 -- BUILD UI (Tabs & Groupboxes)
 -- ============================================================
--- Tab: Aimbot
 local tabAimbot = AddTab("Aimbot")
-local gAimbot = AddGroupbox(tabAimbot, "Aimbot", 1)   -- left
-local gTrigger = AddGroupbox(tabAimbot, "Triggerbot", 2) -- right
-local gRage = AddGroupbox(tabAimbot, "Ragebot", 1)
-local gOrbit = AddGroupbox(tabAimbot, "Orbit", 2)
-local gVoid = AddGroupbox(tabAimbot, "Voidspam", 1)
+local gAimbot = AddGroupbox(tabAimbot, "Aimbot")   -- left
+local gTrigger = AddGroupbox(tabAimbot, "Triggerbot") -- right
+local gRage = AddGroupbox(tabAimbot, "Ragebot")
+local gOrbit = AddGroupbox(tabAimbot, "Orbit")
+local gVoid = AddGroupbox(tabAimbot, "Voidspam")
 
 -- Aimbot group
 MakeToggle(gAimbot, "Enable Aimbot", function() return Config.Aimbot.Enabled end, function(v) Config.Aimbot.Enabled = v; SaveConfig() end)
@@ -848,10 +982,11 @@ MakeSlider(gVoid, "Speed (Hz)", function() return Config.Voidspam.Speed end, fun
 
 -- Tab: ESP
 local tabESP = AddTab("ESP")
-local gESP = AddGroupbox(tabESP, "ESP", 1)
+local gESP = AddGroupbox(tabESP, "ESP")
 MakeToggle(gESP, "Enable ESP", function() return Config.ESP.Enabled end, function(v) Config.ESP.Enabled = v; SaveConfig() end)
+MakeToggle(gESP, "Streamproof", function() return Config.ESP.Streamproof end, function(v) Config.ESP.Streamproof = v; if v and not StreamWindow then InitStreamWindow() end; SaveConfig() end)
 MakeToggle(gESP, "Box ESP", function() return Config.ESP.Boxes end, function(v) Config.ESP.Boxes = v; SaveConfig() end)
-MakeToggle(gESP, "Skeleton ESP", function() return Config.ESP.Skeleton end, function(v) Config.ESP.Skeleton = v; SaveConfig() end)
+MakeToggle(gESP, "Skeleton ESP", function() return Config.ESP.Skeleton end, function(v) Config.ESP.Skeleton = v; SaveConfig() end)  -- not implemented but kept for config
 MakeToggle(gESP, "Names", function() return Config.ESP.Names end, function(v) Config.ESP.Names = v; SaveConfig() end)
 MakeToggle(gESP, "Health Bars", function() return Config.ESP.Health end, function(v) Config.ESP.Health = v; SaveConfig() end)
 MakeToggle(gESP, "Distance", function() return Config.ESP.Distance end, function(v) Config.ESP.Distance = v; SaveConfig() end)
@@ -860,15 +995,13 @@ MakeSlider(gESP, "Max Distance", function() return Config.ESP.MaxDistance end, f
 
 -- Tab: Misc
 local tabMisc = AddTab("Misc")
-local gMove = AddGroupbox(tabMisc, "Movement", 1)
-local gSet = AddGroupbox(tabMisc, "Settings", 2)
+local gMove = AddGroupbox(tabMisc, "Movement")
+local gSet = AddGroupbox(tabMisc, "Settings")
 
--- Movement
 MakeSlider(gMove, "Walk Speed", function() return Config.Movement.Speed end, function(v) Config.Movement.Speed = v; SaveConfig() end, 16, 200)
 MakeToggle(gMove, "Flight", function() return Config.Movement.Flight end, function(v) Config.Movement.Flight = v; if v then StartFlight() end; SaveConfig() end)
 MakeSlider(gMove, "Fly Speed", function() return Config.Movement.FlySpeed end, function(v) Config.Movement.FlySpeed = v; SaveConfig() end, 10, 200)
 
--- Settings
 MakeDropdown(gSet, "Config", GetConfigNames(), function() return Config.Settings.ConfigName end, function(v) Config.Settings.ConfigName = v; SaveConfig() end)
 MakeButton(gSet, "Save Config", function() SaveConfig(Config.Settings.ConfigName) end)
 MakeButton(gSet, "Load Config", function() LoadConfig(Config.Settings.ConfigName) end)
@@ -881,7 +1014,7 @@ end)
 MakeToggle(gSet, "Auto-Load", function() return Config.Settings.AutoLoad end, function(v) Config.Settings.AutoLoad = v; SaveConfig() end)
 
 -- ============================================================
--- TOGGLE UI (RightShift)
+-- TOGGLE UI
 -- ============================================================
 UserInputService.InputBegan:Connect(function(i)
     if i.KeyCode == Enum.KeyCode.RightShift and not i.IsProcessed then
@@ -893,7 +1026,7 @@ end)
 -- MAIN LOOP
 -- ============================================================
 RunService.RenderStepped:Connect(function()
-    -- FOV Circle
+    -- FOV
     if Config.Aimbot.Enabled and Config.Aimbot.ShowFOV then
         local mp = UserInputService:GetMouseLocation()
         FOVCircle.Position = mp
@@ -917,7 +1050,7 @@ RunService.RenderStepped:Connect(function()
         Triggerbot()
     end
 
-    -- ESP
+    -- ESP (handles both streamproof and normal)
     UpdateESP()
 end)
 
@@ -929,7 +1062,7 @@ StartOrbit()
 StartVoidspam()
 StartSpeed()
 StartFlight()
-print("Nexo loaded! Press RightShift to open menu.")
+print("[Nexo] Loaded! Press RightShift to open menu. Streamproof: " .. (WindowSupported and "supported" or "not supported"))
 
 -- ============================================================
 -- CLEANUP
@@ -940,6 +1073,7 @@ local function unload()
     if speedTask then speedTask:Disconnect() end
     if flyTask then flyTask:Disconnect() end
     FOVCircle:Remove()
+    if StreamWindow then StreamWindow:Remove() end
     for _, objs in pairs(EspObjects) do
         for _, o in pairs(objs) do
             if o then pcall(o.Remove, o) end
