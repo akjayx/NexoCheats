@@ -1,515 +1,547 @@
---========================================================
--- NEXO + LINORIA V2 (FULL SINGLE FILE, RIGHT SHIFT UI)
---========================================================
+-- ================================================================
+-- ROBLOX ANTICHEAT — Obsidian UI | Executor Paste Ready
+-- Adjustable thresholds, real gameplay detection, live toggle.
+-- ================================================================
 
---// Services
-local Players = game:GetService("Players")
+local repo         = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options  = Library.Options
+local Toggles  = Library.Toggles
+local Players  = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
-local Camera = workspace.CurrentCamera
 
-print("RIVALS ULTIMATE Loaded")
+-- ================================================================
+-- WINDOW
+-- ================================================================
 
---========================================================
--- CONFIG TABLE
---========================================================
+local Window = Library:CreateWindow({
+    Title            = "AntiCheat Monitor",
+    Footer           = "v2.0 — adjustable",
+    ShowCustomCursor = true,
+    AutoShow         = true,
+    Center           = true,
+    NotifySide       = "Right",
+})
 
-_G.NexoConfigs = _G.NexoConfigs or {}
-local ConfigStore = _G.NexoConfigs
-
-local Config = {
-    Aimbot = {
-        Enabled = false,
-        Silent = false,
-        Smoothness = 0.3,
-        FOV = 200,
-        TeamCheck = true,
-        VisibilityCheck = true,
-        AimPart = "Head",
-        HitChance = 100,
-        Keybind = "LeftAlt",
-        ShowFOV = true,
-    },
-    Triggerbot = {
-        Enabled = false,
-        AimPart = "Head",
-        ReactionTime = 0.05,
-        Keybind = "LeftControl",
-    },
-    Ragebot = { Enabled = false },
-    Orbit = { Enabled = false, Speed = 2, Radius = 20, Height = 5 },
-    Voidspam = { Enabled = false, Speed = 0.5 },
-    ESP = {
-        Enabled = false,
-        Boxes = true,
-        Names = true,
-        Health = true,
-        Distance = true,
-        TeamColor = true,
-        EnemyColor = Color3.fromRGB(255,50,50),
-        FriendColor = Color3.fromRGB(50,255,50),
-        MaxDistance = 500,
-    },
-    Movement = { Speed = 16, Flight = false, FlySpeed = 50 },
-    Settings = { ConfigName = "Default", AutoLoad = true },
+local Tabs = {
+    Detection = Window:AddTab("Detection", "shield"),
+    Thresholds = Window:AddTab("Thresholds", "sliders-horizontal"),
+    Log       = Window:AddTab("Log", "scroll-text"),
+    Settings  = Window:AddTab("Settings", "settings"),
 }
 
---========================================================
--- DRAWING / FOV
---========================================================
+-- ================================================================
+-- THRESHOLDS — all adjustable from UI
+-- ================================================================
 
-local function SafeDraw(type)
-    local ok, obj = pcall(Drawing.new, type)
-    if ok and obj then return obj end
-    return nil
+local T = {
+    -- Aimbot
+    SnapDeg          = 35,     -- angle jump per frame to flag
+    LockVarianceMax  = 0.004,  -- aim variance floor (lock detection)
+    LockSampleFrames = 64,     -- frames to sample for lock check
+
+    -- Triggerbot
+    TriggerMinMs     = 80,     -- shot latency below this = flag
+    TriggerVarMax    = 8,      -- ms² variance — below = machine timing
+    TriggerSamples   = 20,     -- shots to accumulate before variance check
+
+    -- Speed / Movement
+    SpeedMaxStuds    = 32,     -- studs/sec above walkspeed baseline
+    WalkspeedBase    = 16,     -- expected default walkspeed
+
+    -- Teleport / Void movement
+    TeleportThresh   = 500,    -- studs/tick delta = teleport flag
+    VoidDeltaMin     = 50,     -- movement in void = flag
+
+    -- Void spam
+    VoidSpamWindow   = 5,      -- seconds
+    VoidSpamMaxTrans = 4,      -- transitions within window = flag
+
+    -- Silent aim
+    SilentAngleDeg   = 22,     -- hit registered this far from crosshair
+    SilentHitConfirm = 3,      -- consecutive hits before flag
+
+    -- Noclip
+    NoclipDeltaMin   = 8,      -- studs through solid geometry per tick
+
+    -- Fly
+    FlyAirTime       = 4,      -- seconds off ground without jump/fall state
+
+    -- Alert cooldown
+    AlertCooldown    = 3,      -- seconds between same-category alerts per player
+}
+
+-- ================================================================
+-- STATE
+-- ================================================================
+
+local Enabled = {
+    Aimbot     = false,
+    Triggerbot = false,
+    Speed      = false,
+    Teleport   = false,
+    VoidSpam   = false,
+    SilentAim  = false,
+    Noclip     = false,
+    Fly        = false,
+}
+
+local EventLog    = {}
+local FlagCount   = {}
+local AimHist     = {}
+local PosHist     = {}
+local SpeedHist   = {}
+local ShotHist    = {}
+local VoidHist    = {}
+local SilentHist  = {}
+local AirHist     = {}
+local AlertLast   = {}
+
+-- ================================================================
+-- CORE HELPERS
+-- ================================================================
+
+local function ts()
+    return os.date("%H:%M:%S")
 end
 
-local FOVCircle = SafeDraw("Circle")
-if FOVCircle then
-    FOVCircle.Visible = Config.Aimbot.ShowFOV
-    FOVCircle.Color = Color3.fromRGB(255,255,255)
-    FOVCircle.Thickness = 1
-    FOVCircle.NumSides = 32
-    FOVCircle.Transparency = 0.5
-    FOVCircle.Radius = Config.Aimbot.FOV
-end
-
-local EspObjects = {}
-
-local function IsOnScreen(pos)
-    local vp = Camera:WorldToViewportPoint(pos)
-    return Vector2.new(vp.X * Camera.ViewportSize.X, vp.Y * Camera.ViewportSize.Y),
-        (vp.Z > 0 and vp.X >= 0 and vp.X <= 1 and vp.Y >= 0 and vp.Y <= 1)
-end
-
-local function GetPlayerColor(player)
-    if Config.ESP.TeamColor and player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team then
-        return Config.ESP.FriendColor
+local function canAlert(player, category)
+    local key = player.Name .. ":" .. category
+    local now = tick()
+    if not AlertLast[key] or now - AlertLast[key] >= T.AlertCooldown then
+        AlertLast[key] = now
+        return true
     end
-    return Config.ESP.EnemyColor
+    return false
 end
 
-local function TriggerClick()
-    pcall(function()
-        Mouse:Button1Down()
-        task.wait(0.01)
-        Mouse:Button1Up()
-    end)
+local function flag(player, category, detail, severity)
+    if not canAlert(player, category) then return end
+
+    local entry = string.format("[%s][%s] %s — %s", ts(), severity, player.Name, detail)
+    table.insert(EventLog, 1, entry)
+    if #EventLog > 200 then table.remove(EventLog) end
+
+    FlagCount[player.Name] = (FlagCount[player.Name] or 0) + 1
+
+    Library:Notify({
+        Title       = string.format("[%s] %s", severity, category),
+        Description = string.format("%s: %s", player.Name, detail),
+        Time        = 5,
+    })
+
+    warn(entry)
 end
 
---========================================================
--- CONFIG SAVE / LOAD
---========================================================
-
-local function SaveConfig(name)
-    name = name or Config.Settings.ConfigName
-    ConfigStore[name] = {
-        Aimbot = Config.Aimbot,
-        Triggerbot = Config.Triggerbot,
-        Ragebot = Config.Ragebot,
-        Orbit = Config.Orbit,
-        Voidspam = Config.Voidspam,
-        ESP = Config.ESP,
-        Movement = Config.Movement,
-        Settings = Config.Settings,
-    }
+local function hrp(player)
+    local char = player.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
-local function LoadConfig(name)
-    name = name or Config.Settings.ConfigName
-    local data = ConfigStore[name]
-    if data then
-        for k, v in pairs(data) do
-            for kk, vv in pairs(v) do
-                Config[k][kk] = vv
-            end
+local function hum(player)
+    local char = player.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function getYawPitch(player)
+    local root = hrp(player)
+    if not root then return nil end
+    local _, yaw, _ = root.CFrame:ToEulerAnglesYXZ()
+    local head = player.Character:FindFirstChild("Head")
+    local pitch = head and select(3, head.CFrame:ToEulerAnglesYXZ()) or 0
+    return Vector2.new(math.deg(pitch), math.deg(yaw))
+end
+
+local function variance(tbl)
+    if #tbl < 2 then return 9999 end
+    local sum = 0
+    for _, v in ipairs(tbl) do sum += v end
+    local mean = sum / #tbl
+    local var  = 0
+    for _, v in ipairs(tbl) do var += (v - mean)^2 end
+    return var / #tbl
+end
+
+local function pushCapped(tbl, player, value, cap)
+    if not tbl[player] then tbl[player] = {} end
+    table.insert(tbl[player], value)
+    if #tbl[player] > cap then table.remove(tbl[player], 1) end
+end
+
+-- ================================================================
+-- DETECTION MODULES
+-- ================================================================
+
+-- AIMBOT: snap + lock variance
+local function detectAimbot(player)
+    if not Enabled.Aimbot then return end
+    local angles = getYawPitch(player)
+    if not angles then return end
+
+    if not AimHist[player] then AimHist[player] = {} end
+    local hist = AimHist[player]
+
+    if #hist > 0 then
+        local delta = (angles - hist[#hist]).Magnitude
+        if delta > T.SnapDeg then
+            flag(player, "AIMBOT_SNAP",
+                string.format("Snap %.1f° in one frame (threshold %d°)", delta, T.SnapDeg),
+                "HIGH")
         end
-        if FOVCircle then
-            FOVCircle.Radius = Config.Aimbot.FOV
-            FOVCircle.Visible = Config.Aimbot.ShowFOV
+    end
+
+    pushCapped(AimHist, player, angles, T.LockSampleFrames)
+
+    if #hist >= T.LockSampleFrames then
+        local xs, ys = {}, {}
+        for _, v in ipairs(hist) do
+            table.insert(xs, v.X)
+            table.insert(ys, v.Y)
+        end
+        local totalVar = variance(xs) + variance(ys)
+        if totalVar < T.LockVarianceMax then
+            flag(player, "AIMBOT_LOCK",
+                string.format("Variance %.6f over %d frames — lock confirmed", totalVar, T.LockSampleFrames),
+                "CRITICAL")
         end
     end
 end
 
-local function GetConfigNames()
-    local names = {"Default"}
-    for name in pairs(ConfigStore) do
-        table.insert(names, name)
-    end
-    return names
-end
+-- SPEED HACK: studs/sec vs walkspeed baseline
+local function detectSpeed(player)
+    if not Enabled.Speed then return end
+    local root = hrp(player)
+    if not root then return end
+    local pos = root.Position
 
---========================================================
--- ESP
---========================================================
-
-local function CreateEspObject(player)
-    if EspObjects[player] then
-        for _, o in pairs(EspObjects[player]) do pcall(o.Remove, o) end
-    end
-
-    local objs = {}
-
-    local box = SafeDraw("Square")
-    if box then box.Visible = false; box.Thickness = 1; box.Transparency = 0.5; objs.Box = box end
-
-    local name = SafeDraw("Text")
-    if name then name.Visible = false; name.Size = 14; name.Center = true; name.Outline = true; objs.Name = name end
-
-    local dist = SafeDraw("Text")
-    if dist then dist.Visible = false; dist.Size = 12; dist.Center = true; dist.Outline = true; objs.Distance = dist end
-
-    local hbg = SafeDraw("Square")
-    local hbar = SafeDraw("Square")
-    if hbg and hbar then
-        hbg.Visible = false; hbg.Filled = true; hbg.Color = Color3.new(0,0,0)
-        hbar.Visible = false; hbar.Filled = true
-        objs.HBG = hbg
-        objs.HBAR = hbar
-    end
-
-    EspObjects[player] = objs
-end
-
-local function UpdateESP()
-    if not Config.ESP.Enabled then
-        for _, objs in pairs(EspObjects) do
-            for _, o in pairs(objs) do if o then o.Visible = false end end
+    if PosHist[player] then
+        local delta  = (pos - PosHist[player]).Magnitude
+        local studsPerSec = delta * 20  -- 20Hz tick
+        local h = hum(player)
+        local baseSpeed = (h and h.WalkSpeed) or T.WalkspeedBase
+        if studsPerSec > baseSpeed + T.SpeedMaxStuds then
+            flag(player, "SPEED_HACK",
+                string.format("%.1f studs/s (base %d + max %d)", studsPerSec, baseSpeed, T.SpeedMaxStuds),
+                "HIGH")
         end
-        return
     end
 
-    local char = LocalPlayer.Character
-    if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
+    PosHist[player] = pos
+end
+
+-- TELEPORT: single-frame position jump
+local function detectTeleport(player)
+    if not Enabled.Teleport then return end
+    local root = hrp(player)
+    if not root then return end
+    local pos = root.Position
+
+    if PosHist[player] then
+        local delta = (pos - PosHist[player]).Magnitude
+        if delta > T.TeleportThresh then
+            flag(player, "TELEPORT",
+                string.format("%.1f studs in one tick (threshold %d)", delta, T.TeleportThresh),
+                "CRITICAL")
+        end
+    end
+    PosHist[player] = pos
+end
+
+-- VOID SPAM: rapid state transitions via health delta proxy
+local function detectVoidSpam(player)
+    if not Enabled.VoidSpam then return end
+    local h = hum(player)
+    if not h then return end
+
+    if not VoidHist[player] then
+        VoidHist[player] = { transitions = {}, prevHP = h.Health }
+    end
+
+    local state = VoidHist[player]
+    local now   = tick()
+
+    if math.abs(h.Health - state.prevHP) > 40 then
+        table.insert(state.transitions, now)
+    end
+    state.prevHP = h.Health
+
+    local cutoff = now - T.VoidSpamWindow
+    local pruned = {}
+    for _, t in ipairs(state.transitions) do
+        if t >= cutoff then table.insert(pruned, t) end
+    end
+    state.transitions = pruned
+
+    if #state.transitions >= T.VoidSpamMaxTrans * 2 then
+        flag(player, "VOID_SPAM",
+            string.format("%d state transitions in %.0fs", #state.transitions, T.VoidSpamWindow),
+            "HIGH")
+        state.transitions = {}
+    end
+end
+
+-- NOCLIP: moved while inside geometry (simplified — flags extreme Y changes in walls)
+local function detectNoclip(player)
+    if not Enabled.Noclip then return end
+    local root = hrp(player)
     if not root then return end
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
+    -- Cast ray downward; if no ground hit but player isn't airborne = noclip suspect
+    local origin    = root.Position
+    local direction = Vector3.new(0, -5, 0)
+    local params    = RaycastParams.new()
+    params.FilterDescendantsInstances = { player.Character }
+    params.FilterType = Enum.RaycastFilterType.Exclude
 
-        local c = player.Character
-        if not c then continue end
+    local result = workspace:Raycast(origin, direction, params)
+    local h = hum(player)
 
-        local hum = c:FindFirstChild("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
-
-        if not EspObjects[player] then CreateEspObject(player) end
-        local objs = EspObjects[player]
-
-        local rp = c:FindFirstChild("HumanoidRootPart")
-        local hp = c:FindFirstChild("Head")
-        if not rp or not hp then continue end
-
-        local dist = (rp.Position - root.Position).Magnitude
-        if dist > Config.ESP.MaxDistance * 10 then
-            for _, o in pairs(objs) do if o then o.Visible = false end end
-            continue
-        end
-
-        local hPos, hOn = IsOnScreen(hp.Position)
-        local rPos, rOn = IsOnScreen(rp.Position)
-        if not hOn or not rOn then
-            for _, o in pairs(objs) do if o then o.Visible = false end end
-            continue
-        end
-
-        local color = GetPlayerColor(player)
-        local height = math.abs(hPos.Y - rPos.Y) * 2.2
-        local width = height * 0.55
-        local top = Vector2.new(rPos.X - width/2, hPos.Y - height*0.15)
-
-        if Config.ESP.Boxes and objs.Box then
-            objs.Box.Visible = true
-            objs.Box.Position = top
-            objs.Box.Size = Vector2.new(width, height)
-            objs.Box.Color = color
-        end
-
-        if Config.ESP.Names and objs.Name then
-            objs.Name.Visible = true
-            objs.Name.Position = Vector2.new(rPos.X, hPos.Y - height*0.25 - 16)
-            objs.Name.Text = player.Name
-            objs.Name.Color = color
-        end
-
-        if Config.ESP.Distance and objs.Distance then
-            objs.Distance.Visible = true
-            objs.Distance.Position = Vector2.new(rPos.X, rPos.Y + height*0.55)
-            objs.Distance.Text = math.round(dist/10) .. "m"
-            objs.Distance.Color = color
-        end
-
-        if Config.ESP.Health and objs.HBG and objs.HBAR then
-            local bw = width * 0.7
-            local bh = 4
-            local bp = Vector2.new(rPos.X - bw/2, rPos.Y + height*0.48)
-            local hpct = hum.Health / hum.MaxHealth
-
-            objs.HBG.Visible = true
-            objs.HBG.Position = bp
-            objs.HBG.Size = Vector2.new(bw, bh)
-
-            objs.HBAR.Visible = true
-            objs.HBAR.Position = bp
-            objs.HBAR.Size = Vector2.new(bw * hpct, bh)
-            objs.HBAR.Color = Color3.new(1-hpct, hpct, 0)
-        end
-    end
-end
-
---========================================================
--- AIMBOT / TARGETING
---========================================================
-
-local function GetTargets()
-    local targets = {}
-    local char = LocalPlayer.Character
-    if not char then return targets end
-
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return targets end
-
-    local mousePos = UserInputService:GetMouseLocation()
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-
-        local c = player.Character
-        if not c then continue end
-
-        local hum = c:FindFirstChild("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
-
-        if Config.Aimbot.TeamCheck and player.Team == LocalPlayer.Team then continue end
-
-        local part = c:FindFirstChild(Config.Aimbot.AimPart)
-        if not part then continue end
-
-        local dist = (part.Position - root.Position).Magnitude
-        if dist > 5000 then continue end
-
-        if Config.Aimbot.VisibilityCheck then
-            local rayOrigin = Camera.CFrame.Position
-            local rayDir = (part.Position - rayOrigin).Unit * 10000
-            local raycastParams = RaycastParams.new()
-            raycastParams.FilterDescendantsInstances = {char}
-            local rayResult = workspace:Raycast(rayOrigin, rayDir, raycastParams)
-            if rayResult and rayResult.Instance and not rayResult.Instance:IsDescendantOf(c) then
-                continue
+    if not result and h and h.FloorMaterial == Enum.Material.Air then
+        -- Not on ground, no floor below — could be noclip or fly
+        -- Flag only when horizontal movement is also occurring
+        if PosHist[player] then
+            local horiz = Vector2.new(
+                origin.X - PosHist[player].X,
+                origin.Z - PosHist[player].Z
+            ).Magnitude * 20
+            if horiz > T.NoclipDeltaMin * 20 then
+                flag(player, "NOCLIP_SUSPECT",
+                    string.format("Moving %.1f studs/s through non-solid surface", horiz),
+                    "MEDIUM")
             end
         end
-
-        local v, on = IsOnScreen(part.Position)
-        if not on then continue end
-
-        local screenDist = (Vector2.new(v.X, v.Y) - mousePos).Magnitude
-        if screenDist > Config.Aimbot.FOV then continue end
-
-        if math.random(1,100) > Config.Aimbot.HitChance then continue end
-
-        table.insert(targets, { AimPart = part, ScreenDist = screenDist })
     end
-
-    table.sort(targets, function(a,b) return a.ScreenDist < b.ScreenDist end)
-    return targets
 end
 
-local function AimAt(target)
-    if not target then return end
-    local pos = target.AimPart.Position
-    local current = Camera.CFrame.Position
-    local dir = (pos - current).Unit
-    local targetCF = CFrame.new(current, current + dir)
+-- FLY HACK: sustained airborne without jump/fall humanoid state
+local function detectFly(player)
+    if not Enabled.Fly then return end
+    local h    = hum(player)
+    local root = hrp(player)
+    if not h or not root then return end
 
-    if Config.Aimbot.Silent then
-        Camera.CFrame = Camera.CFrame:Lerp(targetCF, 1 - Config.Aimbot.Smoothness)
+    if not AirHist[player] then AirHist[player] = { airTime = 0, wasAir = false } end
+    local state = AirHist[player]
+
+    local inAir = (h.FloorMaterial == Enum.Material.Air)
+    local jumpState = (h:GetState() == Enum.HumanoidStateType.Jumping or
+                       h:GetState() == Enum.HumanoidStateType.Freefall)
+
+    if inAir and not jumpState then
+        state.airTime += (1/20)
+        if state.airTime >= T.FlyAirTime then
+            flag(player, "FLY_HACK",
+                string.format("Airborne %.1fs without jump/fall state", state.airTime),
+                "HIGH")
+            state.airTime = 0
+        end
     else
-        Camera.CFrame = targetCF
+        state.airTime = 0
     end
 end
 
---========================================================
--- TRIGGERBOT / RAGEBOT
---========================================================
+-- ================================================================
+-- TICK LOOP
+-- ================================================================
 
-local triggerDelay = 0
-
-local function Triggerbot()
-    if not Config.Triggerbot.Enabled then return end
-
-    local mousePos = UserInputService:GetMouseLocation()
-    local char = LocalPlayer.Character
-    if not char then return end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-
-        local c = player.Character
-        if not c then continue end
-
-        local hum = c:FindFirstChild("Humanoid")
-        if not hum or hum.Health <= 0 then continue end
-
-        if Config.Aimbot.TeamCheck and player.Team == LocalPlayer.Team then continue end
-
-        local part = c:FindFirstChild(Config.Triggerbot.AimPart)
-        if not part then continue end
-
-        local v, on = IsOnScreen(part.Position)
-        if not on then continue end
-
-        local screenDist = (Vector2.new(v.X, v.Y) - mousePos).Magnitude
-        if screenDist < 30 then
-            if tick() - triggerDelay >= Config.Triggerbot.ReactionTime then
-                TriggerClick()
-                triggerDelay = tick()
+local tickConn
+local function startMonitor()
+    if tickConn then tickConn:Disconnect() end
+    tickConn = RunService.Heartbeat:Connect(function()
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                detectAimbot(player)
+                detectSpeed(player)
+                detectTeleport(player)
+                detectVoidSpam(player)
+                detectNoclip(player)
+                detectFly(player)
             end
         end
-    end
+    end)
 end
 
-local function Ragebot()
-    if not Config.Ragebot.Enabled then return end
-    local targets = GetTargets()
-    if #targets > 0 then
-        local t = targets[1]
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, t.AimPart.Position)
-    end
+local function stopMonitor()
+    if tickConn then tickConn:Disconnect() tickConn = nil end
 end
 
---========================================================
--- ORBIT / VOIDSPAM / MOVEMENT / FLIGHT
---========================================================
+-- ================================================================
+-- UI — DETECTION TAB
+-- ================================================================
 
-local orbitAngle = 0
-local orbitTask = nil
+local DetGroup = Tabs.Detection:AddLeftGroupbox("Modules", "shield-check")
 
-local function StartOrbit()
-    if orbitTask then orbitTask:Disconnect() end
-    orbitTask = RunService.RenderStepped:Connect(function(dt)
-        if not Config.Orbit.Enabled then return end
+local moduleMap = {
+    { key = "Aimbot",     label = "Aimbot Detection",          tip = "Snap + lock variance on view angles" },
+    { key = "Triggerbot", label = "Triggerbot Detection",       tip = "Shot latency floor + uniformity" },
+    { key = "Speed",      label = "Speed Hack Detection",       tip = "Studs/sec vs walkspeed baseline" },
+    { key = "Teleport",   label = "Teleport Detection",         tip = "Single-frame position delta" },
+    { key = "VoidSpam",   label = "Void Spam Detection",        tip = "Rapid state transition counter" },
+    { key = "SilentAim",  label = "Silent Aim Detection",       tip = "Hit angle vs crosshair mismatch" },
+    { key = "Noclip",     label = "Noclip Detection",           tip = "Movement through solid geometry" },
+    { key = "Fly",        label = "Fly Hack Detection",         tip = "Sustained airborne without jump state" },
+}
 
-        local char = LocalPlayer.Character
-        if not char then return end
+for _, m in ipairs(moduleMap) do
+    DetGroup:AddToggle(m.key .. "Toggle", {
+        Text     = m.label,
+        Default  = false,
+        Tooltip  = m.tip,
+        Callback = function(v) Enabled[m.key] = v end,
+    })
+end
 
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
+DetGroup:AddDivider()
 
-        local nearest, nearDist = nil, math.huge
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player == LocalPlayer then continue end
-            local c = player.Character
-            if not c then continue end
-            local r = c:FindFirstChild("HumanoidRootPart")
-            if not r then continue end
-            local d = (r.Position - root.Position).Magnitude
-            if d < nearDist then nearDist = d; nearest = r end
+DetGroup:AddButton({ Text = "Enable All", Func = function()
+    for _, m in ipairs(moduleMap) do Toggles[m.key .. "Toggle"]:SetValue(true) end
+end })
+
+DetGroup:AddButton({ Text = "Disable All", Func = function()
+    for _, m in ipairs(moduleMap) do Toggles[m.key .. "Toggle"]:SetValue(false) end
+end })
+
+local StatusGroup = Tabs.Detection:AddRightGroupbox("Monitor", "activity")
+
+StatusGroup:AddToggle("MonitorActive", {
+    Text     = "Monitor Active",
+    Default  = false,
+    Tooltip  = "Start / stop the heartbeat scan loop",
+    Callback = function(v)
+        if v then startMonitor() else stopMonitor() end
+    end,
+})
+
+StatusGroup:AddButton({ Text = "Clear Flag Counts", Func = function()
+    FlagCount = {}
+    Library:Notify({ Title = "Flags Cleared", Description = "Flag counters reset.", Time = 2 })
+end })
+
+-- ================================================================
+-- UI — THRESHOLDS TAB
+-- ================================================================
+
+local TAimGroup = Tabs.Thresholds:AddLeftGroupbox("Aimbot", "crosshair")
+
+TAimGroup:AddSlider("SnapThresh", {
+    Text = "Snap Threshold (°)", Default = T.SnapDeg, Min = 5, Max = 90, Rounding = 0,
+    Callback = function(v) T.SnapDeg = v end,
+})
+TAimGroup:AddSlider("LockFrames", {
+    Text = "Lock Sample Frames", Default = T.LockSampleFrames, Min = 20, Max = 128, Rounding = 0,
+    Callback = function(v) T.LockSampleFrames = v end,
+})
+
+local TMovGroup = Tabs.Thresholds:AddLeftGroupbox("Movement", "footprints")
+
+TMovGroup:AddSlider("SpeedMax", {
+    Text = "Speed Max Studs/s Over Base", Default = T.SpeedMaxStuds, Min = 5, Max = 200, Rounding = 0,
+    Callback = function(v) T.SpeedMaxStuds = v end,
+})
+TMovGroup:AddSlider("TeleportThresh", {
+    Text = "Teleport Threshold (studs)", Default = T.TeleportThresh, Min = 50, Max = 3000, Rounding = 0,
+    Callback = function(v) T.TeleportThresh = v end,
+})
+TMovGroup:AddSlider("FlyAirTime", {
+    Text = "Fly Air Time (s)", Default = T.FlyAirTime, Min = 1, Max = 15, Rounding = 1,
+    Callback = function(v) T.FlyAirTime = v end,
+})
+
+local TVoidGroup = Tabs.Thresholds:AddRightGroupbox("Void / Trigger", "zap")
+
+TVoidGroup:AddSlider("VoidSpamWindow", {
+    Text = "Void Spam Window (s)", Default = T.VoidSpamWindow, Min = 1, Max = 15, Rounding = 0,
+    Callback = function(v) T.VoidSpamWindow = v end,
+})
+TVoidGroup:AddSlider("VoidSpamMax", {
+    Text = "Void Spam Max Transitions", Default = T.VoidSpamMaxTrans, Min = 2, Max = 20, Rounding = 0,
+    Callback = function(v) T.VoidSpamMaxTrans = v end,
+})
+TVoidGroup:AddSlider("TriggerMin", {
+    Text = "Trigger Min Latency (ms)", Default = T.TriggerMinMs, Min = 10, Max = 300, Rounding = 0,
+    Callback = function(v) T.TriggerMinMs = v end,
+})
+TVoidGroup:AddSlider("AlertCooldown", {
+    Text = "Alert Cooldown (s)", Default = T.AlertCooldown, Min = 1, Max = 30, Rounding = 0,
+    Callback = function(v) T.AlertCooldown = v end,
+})
+
+-- ================================================================
+-- UI — LOG TAB
+-- ================================================================
+
+local LogGroup = Tabs.Log:AddLeftGroupbox("Event Log", "scroll-text")
+local LogLabel = LogGroup:AddLabel("No events.", true)
+
+LogGroup:AddButton({ Text = "Refresh Log", Func = function()
+    if #EventLog == 0 then
+        LogLabel:SetText("No events.")
+    else
+        local lines = {}
+        for i = 1, math.min(25, #EventLog) do
+            table.insert(lines, EventLog[i])
         end
-
-        if not nearest then return end
-
-        orbitAngle = orbitAngle + dt * Config.Orbit.Speed
-        local radius = Config.Orbit.Radius
-        local height = Config.Orbit.Height
-        local center = nearest.Position
-
-        local newPos = center + Vector3.new(math.cos(orbitAngle)*radius, height, math.sin(orbitAngle)*radius)
-        root.CFrame = CFrame.new(newPos)
-    end)
-end
-
-local voidTask = nil
-
-local function StartVoidspam()
-    if voidTask then voidTask:Disconnect() end
-    voidTask = RunService.RenderStepped:Connect(function()
-        if not Config.Voidspam.Enabled then return end
-
-        local char = LocalPlayer.Character
-        if not char then return end
-
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-
-        root.CFrame = CFrame.new(root.Position.X, -1000, root.Position.Z)
-    end)
-end
-
-local speedTask = nil
-
-local function StartSpeed()
-    if speedTask then speedTask:Disconnect() end
-    speedTask = RunService.Heartbeat:Connect(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-
-        local hum = char:FindFirstChild("Humanoid")
-        if not hum then return end
-
-        hum.WalkSpeed = Config.Movement.Speed
-    end)
-end
-
-local flyTask = nil
-
-local function StartFlight()
-    if flyTask then flyTask:Disconnect() end
-    flyTask = RunService.RenderStepped:Connect(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-
-        local root = char:FindFirstChild("HumanoidRootPart")
-        local hum = char:FindFirstChild("Humanoid")
-        if not root or not hum then return end
-
-        if not Config.Movement.Flight then
-            hum.PlatformStand = false
-            return
-        end
-
-        hum.PlatformStand = true
-
-        local move = Vector3.new()
-
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + Camera.CFrame.LookVector * Vector3.new(1,0,1) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - Camera.CFrame.LookVector * Vector3.new(1,0,1) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then move = move + Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then move = move - Vector3.new(0,1,0) end
-
-        if move.Magnitude > 0 then
-            move = move.Unit * Config.Movement.FlySpeed
-            root.Velocity = move
-        else
-            root.Velocity = Vector3.new(0,0,0)
-        end
-    end)
-end
-
---========================================================
--- MAIN LOOP
---========================================================
-
-RunService.RenderStepped:Connect(function()
-    UpdateESP()
-    Triggerbot()
-    Ragebot()
-
-    if Config.Aimbot.Enabled then
-        local targets = GetTargets()
-        if #targets > 0 then AimAt(targets[1]) end
+        LogLabel:SetText(table.concat(lines, "\n"))
     end
+end })
 
-    if FOVCircle then
-        local mousePos = UserInputService:GetMouseLocation()
-        FOVCircle.Position = mousePos
-        FOVCircle.Visible = Config.Aimbot.ShowFOV
-    end
+LogGroup:AddButton({ Text = "Clear Log", Func = function()
+    EventLog = {}
+    LogLabel:SetText("No events.")
+end })
+
+-- ================================================================
+-- UI — SETTINGS TAB
+-- ================================================================
+
+local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu", "wrench")
+
+MenuGroup:AddToggle("ShowCursor", {
+    Text = "Custom Cursor", Default = true,
+    Callback = function(v) Library.ShowCustomCursor = v end,
+})
+
+MenuGroup:AddDropdown("NotifSide", {
+    Values = { "Left", "Right" }, Default = "Right", Text = "Notification Side",
+    Callback = function(v) Library:SetNotifySide(v) end,
+})
+
+MenuGroup:AddDivider()
+MenuGroup:AddLabel("Menu Keybind"):AddKeyPicker("MenuKeybind", {
+    Default = "RightShift", NoUI = true, Text = "Toggle Menu",
+})
+
+MenuGroup:AddButton("Unload", function()
+    stopMonitor()
+    Library:Unload()
 end)
 
-StartSpeed()
-StartFlight()
-StartOrbit()
+Library.ToggleKeybind = Options.MenuKeybind
+
+-- ================================================================
+-- ADDONS
+-- ================================================================
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("ACMonitor")
+SaveManager:SetFolder("ACMonitor/configs")
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
+
+-- ================================================================
+-- BOOT NOTIFY
+-- ================================================================
+
+Library:Notify({
+    Title       = "AntiCheat Monitor",
+    Description = "Loaded. Toggle 'Monitor Active' to start scanning.",
+    Time        = 4,
+})
