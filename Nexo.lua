@@ -3,8 +3,8 @@ local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
-local Options     = Library.Options
-local Toggles     = Library.Toggles
+local Options  = Library.Options
+local Toggles  = Library.Toggles
 
 local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
@@ -30,7 +30,6 @@ local function GetClosest(fov, centerMode)
     local ref = centerMode
         and Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
         or  UserInputService:GetMouseLocation()
-
     for _, p in ipairs(Players:GetPlayers()) do
         if p == LocalPlayer then continue end
         local char = p.Character
@@ -46,8 +45,53 @@ local function GetClosest(fov, centerMode)
     return closest
 end
 
--- ── ESP ───────────────────────────────────────────────────────────────────────
+-- ── ESP — bounding box from character parts ───────────────────────────────────
 local ESPCache = {}
+
+local PARTS = {
+    "Head","UpperTorso","LowerTorso","HumanoidRootPart",
+    "RightUpperArm","RightLowerArm","RightHand",
+    "LeftUpperArm","LeftLowerArm","LeftHand",
+    "RightUpperLeg","RightLowerLeg","RightFoot",
+    "LeftUpperLeg","LeftLowerLeg","LeftFoot",
+}
+
+local function GetCharacterScreenBounds(char)
+    local minX, minY =  math.huge,  math.huge
+    local maxX, maxY = -math.huge, -math.huge
+    local visible = false
+
+    for _, name in ipairs(PARTS) do
+        local part = char:FindFirstChild(name)
+        if not part then continue end
+        -- sample 8 corners of the part's bounding box
+        local cf   = part.CFrame
+        local size = part.Size / 2
+        for _, offset in ipairs({
+            Vector3.new( size.X,  size.Y,  size.Z),
+            Vector3.new(-size.X,  size.Y,  size.Z),
+            Vector3.new( size.X, -size.Y,  size.Z),
+            Vector3.new(-size.X, -size.Y,  size.Z),
+            Vector3.new( size.X,  size.Y, -size.Z),
+            Vector3.new(-size.X,  size.Y, -size.Z),
+            Vector3.new( size.X, -size.Y, -size.Z),
+            Vector3.new(-size.X, -size.Y, -size.Z),
+        }) do
+            local worldPos = cf:PointToWorldSpace(offset)
+            local sp, onScreen = Camera:WorldToScreenPoint(worldPos)
+            if onScreen then
+                visible = true
+                if sp.X < minX then minX = sp.X end
+                if sp.X > maxX then maxX = sp.X end
+                if sp.Y < minY then minY = sp.Y end
+                if sp.Y > maxY then maxY = sp.Y end
+            end
+        end
+    end
+
+    if not visible then return nil end
+    return minX, minY, maxX, maxY
+end
 
 local function MakeESP(p)
     local d = {}
@@ -56,7 +100,7 @@ local function MakeESP(p)
     d.Box.Color   = Color3.fromRGB(255, 80, 80)
 
     d.Name = Drawing.new("Text")
-    d.Name.Visible = false; d.Name.Size = 14; d.Name.Outline = true
+    d.Name.Visible = false; d.Name.Size = 13; d.Name.Outline = true
     d.Name.Center  = true;  d.Name.Font = 2
     d.Name.Color   = Color3.fromRGB(255, 255, 255)
 
@@ -67,7 +111,7 @@ local function MakeESP(p)
 
     d.HBG  = Drawing.new("Square")
     d.HBG.Visible = false; d.HBG.Filled = true
-    d.HBG.Color   = Color3.fromRGB(30, 30, 30)
+    d.HBG.Color   = Color3.fromRGB(20, 20, 20)
 
     d.HBar = Drawing.new("Square")
     d.HBar.Visible = false; d.HBar.Filled = true
@@ -88,6 +132,7 @@ RunService.RenderStepped:Connect(function()
         for _, d in pairs(ESPCache) do for _, v in pairs(d) do v.Visible = false end end
         return
     end
+
     for _, p in ipairs(Players:GetPlayers()) do
         if p == LocalPlayer then continue end
         if not ESPCache[p] then MakeESP(p) end
@@ -95,39 +140,54 @@ RunService.RenderStepped:Connect(function()
         local char = p.Character
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        local head = char and char:FindFirstChild("Head")
+
         if not char or not hrp or not hum or hum.Health <= 0 then
             for _, v in pairs(d) do v.Visible = false end; continue
         end
+
         local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
-        if dist > (Options.ESPMaxDist and Options.ESPMaxDist.Value or 1000) then
+        local maxDist = Options.ESPMaxDist and Options.ESPMaxDist.Value or 1000
+        if dist > maxDist then
             for _, v in pairs(d) do v.Visible = false end; continue
         end
-        local rs, rv = Camera:WorldToScreenPoint(hrp.Position)
-        local hs, hv = Camera:WorldToScreenPoint((head or hrp).Position + Vector3.new(0, .5, 0))
-        if not rv or not hv then for _, v in pairs(d) do v.Visible = false end; continue end
-        local h  = math.abs(hs.Y - rs.Y) * 2.2
-        local w  = h * 0.55
-        local x  = rs.X - w / 2
-        local y  = hs.Y - h * 0.05
+
+        local minX, minY, maxX, maxY = GetCharacterScreenBounds(char)
+        if not minX then
+            for _, v in pairs(d) do v.Visible = false end; continue
+        end
+
+        local pad = 2
+        local bx = minX - pad
+        local by = minY - pad
+        local bw = (maxX - minX) + pad * 2
+        local bh = (maxY - minY) + pad * 2
         local hp = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
 
-        d.Box.Visible   = Toggles.ESPBoxes  and Toggles.ESPBoxes.Value  or false
-        d.Box.Size      = Vector2.new(w, h); d.Box.Position = Vector2.new(x, y)
+        -- Box
+        d.Box.Visible   = Toggles.ESPBoxes and Toggles.ESPBoxes.Value or false
+        d.Box.Position  = Vector2.new(bx, by)
+        d.Box.Size      = Vector2.new(bw, bh)
 
-        d.Name.Visible  = Toggles.ESPNames  and Toggles.ESPNames.Value  or false
-        d.Name.Text     = p.Name; d.Name.Position = Vector2.new(rs.X, y - 16)
+        -- Name
+        d.Name.Visible  = Toggles.ESPNames and Toggles.ESPNames.Value or false
+        d.Name.Text     = p.Name
+        d.Name.Position = Vector2.new(bx + bw / 2, by - 15)
 
-        d.Dist.Visible  = Toggles.ESPDist   and Toggles.ESPDist.Value   or false
+        -- Distance
+        d.Dist.Visible  = Toggles.ESPDist and Toggles.ESPDist.Value or false
         d.Dist.Text     = "[" .. math.floor(dist) .. "]"
-        d.Dist.Position = Vector2.new(rs.X, y + h + 2)
+        d.Dist.Position = Vector2.new(bx + bw / 2, by + bh + 2)
 
+        -- Health bar (left side, vertical)
+        local barW = 3
+        local barX = bx - barW - 2
         d.HBG.Visible   = Toggles.ESPHealth and Toggles.ESPHealth.Value or false
-        d.HBG.Size      = Vector2.new(4, h); d.HBG.Position = Vector2.new(x - 7, y)
+        d.HBG.Position  = Vector2.new(barX, by)
+        d.HBG.Size      = Vector2.new(barW, bh)
 
         d.HBar.Visible  = Toggles.ESPHealth and Toggles.ESPHealth.Value or false
-        d.HBar.Size     = Vector2.new(4, h * hp)
-        d.HBar.Position = Vector2.new(x - 7, y + h * (1 - hp))
+        d.HBar.Position = Vector2.new(barX, by + bh * (1 - hp))
+        d.HBar.Size     = Vector2.new(barW, bh * hp)
         d.HBar.Color    = Color3.fromRGB(math.floor(255*(1-hp)), math.floor(255*hp), 0)
     end
 end)
@@ -213,7 +273,7 @@ end)
 
 -- ── Window ────────────────────────────────────────────────────────────────────
 local Window = Library:CreateWindow({
-    Title         = "Rivals Suite",
+    Title         = "Nexo",
     Footer        = "v1.0",
     Center        = true,
     AutoShow      = true,
@@ -236,9 +296,9 @@ AimbotGroup:AddToggle("AimbotEnabled", {
     Tooltip = "Hold RMB to lock on",
 })
 AimbotGroup:AddSlider("AimbotFOV", {
-    Text     = "FOV",
-    Default  = 150, Min = 10, Max = 500, Rounding = 0,
-    Suffix   = "px",
+    Text    = "FOV",
+    Default = 150, Min = 10, Max = 500, Rounding = 0,
+    Suffix  = "px",
 })
 AimbotGroup:AddSlider("AimbotSmooth", {
     Text     = "Smoothing",
@@ -270,14 +330,14 @@ SilentGroup:AddSlider("SilentFOV", {
     Callback = function(v) Cfg.SilentFOV = v end,
 })
 
-UtilGroup:AddToggle("VoidEnabled",   { Text = "VoidSpam",         Default = false })
+UtilGroup:AddToggle("VoidEnabled", { Text = "VoidSpam", Default = false })
 UtilGroup:AddSlider("VoidSpeed", {
     Text     = "Void Speed",
     Default  = 5, Min = 1, Max = 20, Rounding = 0,
     Suffix   = "x0.01s",
     Callback = function(v) Cfg.VoidSpeed = v / 100 end,
 })
-UtilGroup:AddToggle("OffsetEnabled", { Text = "Character Offset",  Default = false })
+UtilGroup:AddToggle("OffsetEnabled", { Text = "Character Offset", Default = false })
 UtilGroup:AddSlider("OffsetX", { Text = "Offset X", Default = 0, Min = -20, Max = 20, Rounding = 0, Callback = function(v) Cfg.OffsetX = v end })
 UtilGroup:AddSlider("OffsetY", { Text = "Offset Y", Default = 0, Min = -20, Max = 20, Rounding = 0, Callback = function(v) Cfg.OffsetY = v end })
 UtilGroup:AddSlider("OffsetZ", { Text = "Offset Z", Default = 0, Min = -20, Max = 20, Rounding = 0, Callback = function(v) Cfg.OffsetZ = v end })
@@ -323,10 +383,9 @@ ER:AddSlider("ESPMaxDist", {
     Suffix  = " studs",
 })
 
--- ── Settings Tab ─────────────────────────────────────────────────────────────
--- SaveManager and ThemeManager must receive the TAB object, not a groupbox
+-- ── Settings Tab ──────────────────────────────────────────────────────────────
 SaveManager:SetLibrary(Library)
-SaveManager:SetFolder("RivalsSuite")
+SaveManager:SetFolder("Nexo")
 SaveManager:BuildConfigSection(SettingsTab)
 
 ThemeManager:SetLibrary(Library)
