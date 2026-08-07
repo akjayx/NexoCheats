@@ -1,611 +1,343 @@
--- Rivals Full Suite
--- UI: Obsidian Theme
--- Features: Aimbot, ESP, Silent Aim, VoidSpam, Character Offset, Orbit
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local Options     = Library.Options
+local Toggles     = Library.Toggles
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
-local Camera = Workspace.CurrentCamera
+local Camera           = workspace.CurrentCamera
+local LocalPlayer      = Players.LocalPlayer
 
--- ─── Obsidian UI Library ──────────────────────────────────────────────────────
-local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/deividcomsono/Obsidian/main/Library.lua"))()
-
-local Window = OrionLib:MakeWindow({
-    Name = "Rivals Suite",
-    HidePremium = false,
-    SaveConfig = true,
-    ConfigFolder = "RivalsSuite"
-})
-
--- ─── Config ───────────────────────────────────────────────────────────────────
-local Config = {
-    -- Aimbot
-    AimbotEnabled    = false,
-    AimbotFOV        = 150,
-    AimbotSmoothing  = 0.12,
-    AimbotHitpart    = "Head",
-    AimbotTeamCheck  = true,
-    AimbotVisCheck   = false,
-    AimbotKey        = Enum.UserInputKey.MouseButton2,
-
-    -- ESP
-    ESPEnabled       = false,
-    ESPBoxes         = true,
-    ESPNames         = true,
-    ESPDistance      = true,
-    ESPHealthBar     = true,
-    ESPMaxDist       = 1000,
-    ESPBoxColor      = Color3.fromRGB(255, 80, 80),
-    ESPNameColor     = Color3.fromRGB(255, 255, 255),
-
-    -- Silent Aim
-    SilentEnabled    = false,
-    SilentHitpart    = "Head",
-    SilentFOV        = 200,
-
-    -- VoidSpam
-    VoidEnabled      = false,
-    VoidKey          = Enum.KeyCode.V,
-    VoidSpeed        = 0.05,
-
-    -- Character Offset
-    OffsetEnabled    = false,
-    OffsetX          = 0,
-    OffsetY          = 0,
-    OffsetZ          = 0,
-
-    -- Orbit
-    OrbitEnabled     = false,
-    OrbitRadius      = 8,
-    OrbitSpeed       = 2,
-    OrbitTarget      = nil,
+-- ── Config ────────────────────────────────────────────────────────────────────
+local Cfg = {
+    AimbotSmoothing = 0.12,
+    AimbotHitpart   = "Head",
+    SilentFOV       = 200,
+    SilentHitpart   = "Head",
+    VoidSpeed       = 0.05,
+    OffsetX = 0, OffsetY = 0, OffsetZ = 0,
+    OrbitRadius = 8, OrbitSpeed = 2,
+    OrbitTarget = nil,
 }
 
--- ─── Utility ──────────────────────────────────────────────────────────────────
-local function GetClosestPlayer(fov)
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+local function GetClosest(fov, centerMode)
     local closest, closestDist = nil, fov
-    local mousePos = UserInputService:GetMouseLocation()
+    local ref = centerMode
+        and Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+        or  UserInputService:GetMouseLocation()
 
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer then continue end
-        if Config.AimbotTeamCheck and plr.Team == LocalPlayer.Team then continue end
-        if not plr.Character then continue end
-
-        local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        local char = p.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum or hum.Health <= 0 then continue end
-
-        if Config.AimbotVisCheck then
-            local ray = Ray.new(Camera.CFrame.Position, (hrp.Position - Camera.CFrame.Position).Unit * 1000)
-            local hit = Workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, Workspace.Terrain})
-            if hit and not hit:IsDescendantOf(plr.Character) then continue end
-        end
-
-        local target = plr.Character:FindFirstChild(Config.AimbotHitpart) or hrp
-        local screenPos, onScreen = Camera:WorldToScreenPoint(target.Position)
-        if not onScreen then continue end
-
-        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-        if dist < closestDist then
-            closest = plr
-            closestDist = dist
-        end
+        local part = char:FindFirstChild(Cfg.AimbotHitpart) or hrp
+        local sp, on = Camera:WorldToScreenPoint(part.Position)
+        if not on then continue end
+        local d = (Vector2.new(sp.X, sp.Y) - ref).Magnitude
+        if d < closestDist then closest, closestDist = p, d end
     end
-
     return closest
 end
 
-local function GetClosestPlayerSilent(fov)
-    local closest, closestDist = nil, fov
-    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
-
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer then continue end
-        if not plr.Character then continue end
-
-        local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
-        local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-        if not hrp or not hum or hum.Health <= 0 then continue end
-
-        local target = plr.Character:FindFirstChild(Config.SilentHitpart) or hrp
-        local screenPos, onScreen = Camera:WorldToScreenPoint(target.Position)
-        if not onScreen then continue end
-
-        local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
-        if dist < closestDist then
-            closest = plr
-            closestDist = dist
-        end
-    end
-
-    return closest
-end
-
--- ─── ESP Drawing Cache ────────────────────────────────────────────────────────
+-- ── ESP ───────────────────────────────────────────────────────────────────────
 local ESPCache = {}
 
-local function CreateESP(plr)
-    local drawings = {}
+local function MakeESP(p)
+    local d = {}
+    d.Box  = Drawing.new("Square")
+    d.Box.Visible = false; d.Box.Thickness = 1.5; d.Box.Filled = false
+    d.Box.Color   = Color3.fromRGB(255, 80, 80)
 
-    drawings.Box = Drawing.new("Square")
-    drawings.Box.Visible = false
-    drawings.Box.Color = Config.ESPBoxColor
-    drawings.Box.Thickness = 1.5
-    drawings.Box.Filled = false
+    d.Name = Drawing.new("Text")
+    d.Name.Visible = false; d.Name.Size = 14; d.Name.Outline = true
+    d.Name.Center  = true;  d.Name.Font = 2
+    d.Name.Color   = Color3.fromRGB(255, 255, 255)
 
-    drawings.Name = Drawing.new("Text")
-    drawings.Name.Visible = false
-    drawings.Name.Color = Config.ESPNameColor
-    drawings.Name.Size = 14
-    drawings.Name.Outline = true
-    drawings.Name.Center = true
-    drawings.Name.Font = 2
+    d.Dist = Drawing.new("Text")
+    d.Dist.Visible = false; d.Dist.Size = 12; d.Dist.Outline = true
+    d.Dist.Center  = true;  d.Dist.Font = 2
+    d.Dist.Color   = Color3.fromRGB(200, 200, 200)
 
-    drawings.Dist = Drawing.new("Text")
-    drawings.Dist.Visible = false
-    drawings.Dist.Color = Color3.fromRGB(200, 200, 200)
-    drawings.Dist.Size = 12
-    drawings.Dist.Outline = true
-    drawings.Dist.Center = true
-    drawings.Dist.Font = 2
+    d.HBG  = Drawing.new("Square")
+    d.HBG.Visible = false; d.HBG.Filled = true
+    d.HBG.Color   = Color3.fromRGB(30, 30, 30)
 
-    drawings.HealthBG = Drawing.new("Square")
-    drawings.HealthBG.Visible = false
-    drawings.HealthBG.Color = Color3.fromRGB(30, 30, 30)
-    drawings.HealthBG.Thickness = 1
-    drawings.HealthBG.Filled = true
+    d.HBar = Drawing.new("Square")
+    d.HBar.Visible = false; d.HBar.Filled = true
+    d.HBar.Color   = Color3.fromRGB(60, 220, 80)
 
-    drawings.HealthBar = Drawing.new("Square")
-    drawings.HealthBar.Visible = false
-    drawings.HealthBar.Color = Color3.fromRGB(60, 220, 80)
-    drawings.HealthBar.Thickness = 1
-    drawings.HealthBar.Filled = true
-
-    ESPCache[plr] = drawings
+    ESPCache[p] = d
 end
 
-local function RemoveESP(plr)
-    if ESPCache[plr] then
-        for _, d in pairs(ESPCache[plr]) do d:Remove() end
-        ESPCache[plr] = nil
+Players.PlayerRemoving:Connect(function(p)
+    if ESPCache[p] then
+        for _, v in pairs(ESPCache[p]) do v:Remove() end
+        ESPCache[p] = nil
     end
-end
-
-local function UpdateESP()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr == LocalPlayer then continue end
-        if not ESPCache[plr] then CreateESP(plr) end
-
-        local d = ESPCache[plr]
-        local char = plr.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        local head = char and char:FindFirstChild("Head")
-
-        if not Config.ESPEnabled or not char or not hrp or not hum or hum.Health <= 0 then
-            for _, drawing in pairs(d) do drawing.Visible = false end
-            continue
-        end
-
-        local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
-        if dist > Config.ESPMaxDist then
-            for _, drawing in pairs(d) do drawing.Visible = false end
-            continue
-        end
-
-        local rootScreen, rootVis = Camera:WorldToScreenPoint(hrp.Position)
-        local headScreen, headVis = Camera:WorldToScreenPoint((head or hrp).Position + Vector3.new(0, 0.5, 0))
-
-        if not rootVis or not headVis then
-            for _, drawing in pairs(d) do drawing.Visible = false end
-            continue
-        end
-
-        local height = math.abs(headScreen.Y - rootScreen.Y) * 2.2
-        local width = height * 0.55
-        local x = rootScreen.X - width / 2
-        local y = headScreen.Y - (height * 0.05)
-
-        -- Box
-        d.Box.Visible = Config.ESPBoxes
-        d.Box.Size = Vector2.new(width, height)
-        d.Box.Position = Vector2.new(x, y)
-
-        -- Name
-        d.Name.Visible = Config.ESPNames
-        d.Name.Text = plr.Name
-        d.Name.Position = Vector2.new(rootScreen.X, y - 16)
-
-        -- Distance
-        d.Dist.Visible = Config.ESPDistance
-        d.Dist.Text = string.format("[%d]", math.floor(dist))
-        d.Dist.Position = Vector2.new(rootScreen.X, y + height + 2)
-
-        -- Health bar
-        local barW = 4
-        local barH = height
-        local barX = x - barW - 3
-        local barY = y
-        local hpFrac = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
-
-        d.HealthBG.Visible = Config.ESPHealthBar
-        d.HealthBG.Size = Vector2.new(barW, barH)
-        d.HealthBG.Position = Vector2.new(barX, barY)
-
-        d.HealthBar.Visible = Config.ESPHealthBar
-        d.HealthBar.Size = Vector2.new(barW, barH * hpFrac)
-        d.HealthBar.Position = Vector2.new(barX, barY + barH * (1 - hpFrac))
-        d.HealthBar.Color = Color3.fromRGB(
-            math.floor(255 * (1 - hpFrac)),
-            math.floor(255 * hpFrac),
-            0
-        )
-    end
-end
-
-Players.PlayerRemoving:Connect(RemoveESP)
-
--- ─── Aimbot ───────────────────────────────────────────────────────────────────
-local AimbotCon
-RunService.Heartbeat:Connect(function()
-    if not Config.AimbotEnabled then return end
-    if not UserInputService:IsMouseButtonPressed(Enum.UserInputButton.MouseButton2) then return end
-
-    local target = GetClosestPlayer(Config.AimbotFOV)
-    if not target or not target.Character then return end
-
-    local hitpart = target.Character:FindFirstChild(Config.AimbotHitpart)
-        or target.Character:FindFirstChild("HumanoidRootPart")
-    if not hitpart then return end
-
-    local targetCF = CFrame.new(Camera.CFrame.Position, hitpart.Position)
-    Camera.CFrame = Camera.CFrame:Lerp(targetCF, Config.AimbotSmoothing)
 end)
 
--- ─── Silent Aim ───────────────────────────────────────────────────────────────
-local SilentMT = getrawmetatable(game)
-local OldNamecall = SilentMT.__namecall
-setreadonly(SilentMT, false)
+RunService.RenderStepped:Connect(function()
+    if not Toggles.ESPEnabled or not Toggles.ESPEnabled.Value then
+        for _, d in pairs(ESPCache) do for _, v in pairs(d) do v.Visible = false end end
+        return
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        if not ESPCache[p] then MakeESP(p) end
+        local d    = ESPCache[p]
+        local char = p.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local head = char and char:FindFirstChild("Head")
+        if not char or not hrp or not hum or hum.Health <= 0 then
+            for _, v in pairs(d) do v.Visible = false end; continue
+        end
+        local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
+        if dist > (Options.ESPMaxDist and Options.ESPMaxDist.Value or 1000) then
+            for _, v in pairs(d) do v.Visible = false end; continue
+        end
+        local rs, rv = Camera:WorldToScreenPoint(hrp.Position)
+        local hs, hv = Camera:WorldToScreenPoint((head or hrp).Position + Vector3.new(0, .5, 0))
+        if not rv or not hv then for _, v in pairs(d) do v.Visible = false end; continue end
+        local h  = math.abs(hs.Y - rs.Y) * 2.2
+        local w  = h * 0.55
+        local x  = rs.X - w / 2
+        local y  = hs.Y - h * 0.05
+        local hp = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
 
-SilentMT.__namecall = newcclosure(function(self, ...)
+        d.Box.Visible   = Toggles.ESPBoxes  and Toggles.ESPBoxes.Value  or false
+        d.Box.Size      = Vector2.new(w, h); d.Box.Position = Vector2.new(x, y)
+
+        d.Name.Visible  = Toggles.ESPNames  and Toggles.ESPNames.Value  or false
+        d.Name.Text     = p.Name; d.Name.Position = Vector2.new(rs.X, y - 16)
+
+        d.Dist.Visible  = Toggles.ESPDist   and Toggles.ESPDist.Value   or false
+        d.Dist.Text     = "[" .. math.floor(dist) .. "]"
+        d.Dist.Position = Vector2.new(rs.X, y + h + 2)
+
+        d.HBG.Visible   = Toggles.ESPHealth and Toggles.ESPHealth.Value or false
+        d.HBG.Size      = Vector2.new(4, h); d.HBG.Position = Vector2.new(x - 7, y)
+
+        d.HBar.Visible  = Toggles.ESPHealth and Toggles.ESPHealth.Value or false
+        d.HBar.Size     = Vector2.new(4, h * hp)
+        d.HBar.Position = Vector2.new(x - 7, y + h * (1 - hp))
+        d.HBar.Color    = Color3.fromRGB(math.floor(255*(1-hp)), math.floor(255*hp), 0)
+    end
+end)
+
+-- ── Aimbot ────────────────────────────────────────────────────────────────────
+RunService.Heartbeat:Connect(function()
+    if not Toggles.AimbotEnabled or not Toggles.AimbotEnabled.Value then return end
+    if not UserInputService:IsMouseButtonPressed(Enum.UserInputButton.MouseButton2) then return end
+    local t = GetClosest(Options.AimbotFOV and Options.AimbotFOV.Value or 150, false)
+    if not t or not t.Character then return end
+    local part = t.Character:FindFirstChild(Cfg.AimbotHitpart)
+        or t.Character:FindFirstChild("HumanoidRootPart")
+    if not part then return end
+    Camera.CFrame = Camera.CFrame:Lerp(
+        CFrame.new(Camera.CFrame.Position, part.Position),
+        Cfg.AimbotSmoothing
+    )
+end)
+
+-- ── Silent Aim ────────────────────────────────────────────────────────────────
+local mt  = getrawmetatable(game)
+local old = mt.__namecall
+setreadonly(mt, false)
+mt.__namecall = newcclosure(function(self, ...)
     local method = getnamecallmethod()
-    if Config.SilentEnabled and method == "FireServer" then
+    if (Toggles.SilentEnabled and Toggles.SilentEnabled.Value) and method == "FireServer" then
         local args = {...}
-        local target = GetClosestPlayerSilent(Config.SilentFOV)
-        if target and target.Character then
-            local hitpart = target.Character:FindFirstChild(Config.SilentHitpart)
-                or target.Character:FindFirstChild("HumanoidRootPart")
-            if hitpart then
+        local t = GetClosest(Cfg.SilentFOV, true)
+        if t and t.Character then
+            local part = t.Character:FindFirstChild(Cfg.SilentHitpart)
+                or t.Character:FindFirstChild("HumanoidRootPart")
+            if part then
                 for i, v in pairs(args) do
-                    if typeof(v) == "Instance" and v:IsA("BasePart")
-                        and v.Parent and Players:GetPlayerFromCharacter(v.Parent)
-                        and Players:GetPlayerFromCharacter(v.Parent) ~= LocalPlayer then
-                        args[i] = hitpart
+                    if typeof(v) == "Instance" and v:IsA("BasePart") and v.Parent then
+                        local owner = Players:GetPlayerFromCharacter(v.Parent)
+                        if owner and owner ~= LocalPlayer then
+                            args[i] = part
+                        end
                     end
                 end
-                return OldNamecall(self, table.unpack(args))
+                return old(self, table.unpack(args))
             end
         end
     end
-    return OldNamecall(self, ...)
+    return old(self, ...)
 end)
+setreadonly(mt, true)
 
-setreadonly(SilentMT, true)
-
--- ─── VoidSpam ─────────────────────────────────────────────────────────────────
-local VoidActive = false
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == Config.VoidKey then
-        VoidActive = not VoidActive
-    end
-end)
-
+-- ── VoidSpam ──────────────────────────────────────────────────────────────────
 RunService.Heartbeat:Connect(function()
-    if not Config.VoidEnabled or not VoidActive then return end
-    if not LocalPlayer.Character then return end
-
-    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not Toggles.VoidEnabled or not Toggles.VoidEnabled.Value then return end
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
-    hrp.CFrame = CFrame.new(
-        hrp.Position.X,
-        hrp.Position.Y - 100,
-        hrp.Position.Z
-    )
-    task.wait(Config.VoidSpeed)
-    hrp.CFrame = CFrame.new(
-        hrp.Position.X,
-        hrp.Position.Y + 100,
-        hrp.Position.Z
-    )
+    hrp.CFrame = CFrame.new(hrp.Position.X, hrp.Position.Y - 100, hrp.Position.Z)
+    task.wait(Cfg.VoidSpeed)
+    hrp.CFrame = CFrame.new(hrp.Position.X, hrp.Position.Y + 100, hrp.Position.Z)
 end)
 
--- ─── Character Offset ─────────────────────────────────────────────────────────
-local OffsetCon
+-- ── Character Offset ──────────────────────────────────────────────────────────
 RunService.Heartbeat:Connect(function()
-    if not Config.OffsetEnabled then return end
-    if not LocalPlayer.Character then return end
-
-    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not Toggles.OffsetEnabled or not Toggles.OffsetEnabled.Value then return end
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
-    hrp.CFrame = hrp.CFrame * CFrame.new(
-        Config.OffsetX,
-        Config.OffsetY,
-        Config.OffsetZ
-    )
+    hrp.CFrame = hrp.CFrame * CFrame.new(Cfg.OffsetX, Cfg.OffsetY, Cfg.OffsetZ)
 end)
 
--- ─── Orbit ────────────────────────────────────────────────────────────────────
-local OrbitAngle = 0
+-- ── Orbit ─────────────────────────────────────────────────────────────────────
+local orbitAngle = 0
 RunService.Heartbeat:Connect(function(dt)
-    if not Config.OrbitEnabled or not Config.OrbitTarget then return end
-    if not LocalPlayer.Character then return end
-
-    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local target = Config.OrbitTarget
-    if not target.Character then return end
-    local targetHRP = target.Character:FindFirstChild("HumanoidRootPart")
-    if not targetHRP then return end
-
-    OrbitAngle = OrbitAngle + Config.OrbitSpeed * dt
-    local x = targetHRP.Position.X + Config.OrbitRadius * math.cos(OrbitAngle)
-    local z = targetHRP.Position.Z + Config.OrbitRadius * math.sin(OrbitAngle)
-    hrp.CFrame = CFrame.new(x, targetHRP.Position.Y, z)
+    if not Toggles.OrbitEnabled or not Toggles.OrbitEnabled.Value then return end
+    if not Cfg.OrbitTarget then return end
+    local hrp  = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local tc   = Cfg.OrbitTarget.Character
+    local thrp = tc and tc:FindFirstChild("HumanoidRootPart")
+    if not hrp or not thrp then return end
+    orbitAngle = orbitAngle + Cfg.OrbitSpeed * dt
+    hrp.CFrame = CFrame.new(
+        thrp.Position.X + Cfg.OrbitRadius * math.cos(orbitAngle),
+        thrp.Position.Y,
+        thrp.Position.Z + Cfg.OrbitRadius * math.sin(orbitAngle)
+    )
 end)
 
--- ─── ESP Update Loop ──────────────────────────────────────────────────────────
-RunService.RenderStepped:Connect(UpdateESP)
+-- ── Window ────────────────────────────────────────────────────────────────────
+local Window = Library:CreateWindow({
+    Title         = "Rivals Suite",
+    Footer        = "v1.0",
+    Center        = true,
+    AutoShow      = true,
+    ToggleKeybind = Enum.KeyCode.RightShift,
+})
 
--- ─── UI Tabs ──────────────────────────────────────────────────────────────────
-local AimbotTab  = Window:MakeTab({ Name = "Aimbot",  Icon = "rbxassetid://4483345998", PremiumOnly = false })
-local ESPTab     = Window:MakeTab({ Name = "ESP",     Icon = "rbxassetid://4483345998", PremiumOnly = false })
-local SilentTab  = Window:MakeTab({ Name = "Silent",  Icon = "rbxassetid://4483345998", PremiumOnly = false })
-local MiscTab    = Window:MakeTab({ Name = "Misc",    Icon = "rbxassetid://4483345998", PremiumOnly = false })
+-- ── Tabs ──────────────────────────────────────────────────────────────────────
+local CombatTab   = Window:AddTab("Combat",   "sword")
+local ESPTab      = Window:AddTab("ESP",      "eye")
+local SettingsTab = Window:AddTab("Settings", "settings")
 
--- ── Aimbot Tab ────────────────────────────────────────────────────────────────
-local AimbotSection = AimbotTab:AddSection({ Name = "Aimbot" })
+-- ── Combat Tab ────────────────────────────────────────────────────────────────
+local AimbotGroup = CombatTab:AddLeftGroupbox("Aimbot")
+local UtilGroup   = CombatTab:AddRightGroupbox("Utilities")
+local OrbitGroup  = CombatTab:AddRightGroupbox("Orbit")
 
-AimbotSection:AddToggle({
-    Name = "Enable Aimbot",
+AimbotGroup:AddToggle("AimbotEnabled", {
+    Text    = "Enable Aimbot",
     Default = false,
-    Save = true,
-    Flag = "AimbotEnabled",
-    Callback = function(v) Config.AimbotEnabled = v end
+    Tooltip = "Hold RMB to lock on",
+})
+AimbotGroup:AddSlider("AimbotFOV", {
+    Text     = "FOV",
+    Default  = 150, Min = 10, Max = 500, Rounding = 0,
+    Suffix   = "px",
+})
+AimbotGroup:AddSlider("AimbotSmooth", {
+    Text     = "Smoothing",
+    Default  = 12, Min = 1, Max = 100, Rounding = 0,
+    Suffix   = "%",
+    Callback = function(v) Cfg.AimbotSmoothing = v / 100 end,
+})
+AimbotGroup:AddDropdown("AimbotHitpart", {
+    Text     = "Hitpart",
+    Default  = "Head",
+    Values   = {"Head", "HumanoidRootPart", "UpperTorso", "LowerTorso"},
+    Callback = function(v) Cfg.AimbotHitpart = v end,
+})
+AimbotGroup:AddToggle("AimbotTeamCheck", { Text = "Team Check",       Default = true  })
+AimbotGroup:AddToggle("AimbotVisCheck",  { Text = "Visibility Check", Default = false })
+
+local SilentGroup = CombatTab:AddLeftGroupbox("Silent Aim")
+SilentGroup:AddToggle("SilentEnabled", { Text = "Enable Silent Aim", Default = false })
+SilentGroup:AddDropdown("SilentHitpart", {
+    Text     = "Hitpart",
+    Default  = "Head",
+    Values   = {"Head", "HumanoidRootPart", "UpperTorso"},
+    Callback = function(v) Cfg.SilentHitpart = v end,
+})
+SilentGroup:AddSlider("SilentFOV", {
+    Text     = "FOV",
+    Default  = 200, Min = 10, Max = 800, Rounding = 0,
+    Suffix   = "px",
+    Callback = function(v) Cfg.SilentFOV = v end,
 })
 
-AimbotSection:AddSlider({
-    Name = "FOV",
-    Min = 10, Max = 500, Default = 150,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "px",
-    Save = true, Flag = "AimbotFOV",
-    Callback = function(v) Config.AimbotFOV = v end
+UtilGroup:AddToggle("VoidEnabled",   { Text = "VoidSpam",         Default = false })
+UtilGroup:AddSlider("VoidSpeed", {
+    Text     = "Void Speed",
+    Default  = 5, Min = 1, Max = 20, Rounding = 0,
+    Suffix   = "x0.01s",
+    Callback = function(v) Cfg.VoidSpeed = v / 100 end,
 })
+UtilGroup:AddToggle("OffsetEnabled", { Text = "Character Offset",  Default = false })
+UtilGroup:AddSlider("OffsetX", { Text = "Offset X", Default = 0, Min = -20, Max = 20, Rounding = 0, Callback = function(v) Cfg.OffsetX = v end })
+UtilGroup:AddSlider("OffsetY", { Text = "Offset Y", Default = 0, Min = -20, Max = 20, Rounding = 0, Callback = function(v) Cfg.OffsetY = v end })
+UtilGroup:AddSlider("OffsetZ", { Text = "Offset Z", Default = 0, Min = -20, Max = 20, Rounding = 0, Callback = function(v) Cfg.OffsetZ = v end })
 
-AimbotSection:AddSlider({
-    Name = "Smoothing",
-    Min = 1, Max = 100, Default = 12,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "%",
-    Save = true, Flag = "AimbotSmoothing",
-    Callback = function(v) Config.AimbotSmoothing = v / 100 end
+OrbitGroup:AddToggle("OrbitEnabled", { Text = "Enable Orbit", Default = false })
+OrbitGroup:AddSlider("OrbitRadius", {
+    Text = "Radius", Default = 8, Min = 2, Max = 50, Rounding = 0,
+    Suffix = " studs",
+    Callback = function(v) Cfg.OrbitRadius = v end,
 })
-
-AimbotSection:AddDropdown({
-    Name = "Hitpart",
-    Default = "Head",
-    Options = { "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso" },
-    Save = true, Flag = "AimbotHitpart",
-    Callback = function(v) Config.AimbotHitpart = v end
+OrbitGroup:AddSlider("OrbitSpeed", {
+    Text = "Speed", Default = 2, Min = 1, Max = 20, Rounding = 0,
+    Suffix = " rad/s",
+    Callback = function(v) Cfg.OrbitSpeed = v end,
 })
-
-AimbotSection:AddToggle({
-    Name = "Team Check",
-    Default = true,
-    Save = true, Flag = "AimbotTeamCheck",
-    Callback = function(v) Config.AimbotTeamCheck = v end
-})
-
-AimbotSection:AddToggle({
-    Name = "Visibility Check",
-    Default = false,
-    Save = true, Flag = "AimbotVisCheck",
-    Callback = function(v) Config.AimbotVisCheck = v end
-})
-
--- ── ESP Tab ───────────────────────────────────────────────────────────────────
-local ESPSection = ESPTab:AddSection({ Name = "ESP" })
-
-ESPSection:AddToggle({
-    Name = "Enable ESP",
-    Default = false,
-    Save = true, Flag = "ESPEnabled",
-    Callback = function(v) Config.ESPEnabled = v end
-})
-
-ESPSection:AddToggle({
-    Name = "Boxes",
-    Default = true,
-    Save = true, Flag = "ESPBoxes",
-    Callback = function(v) Config.ESPBoxes = v end
-})
-
-ESPSection:AddToggle({
-    Name = "Names",
-    Default = true,
-    Save = true, Flag = "ESPNames",
-    Callback = function(v) Config.ESPNames = v end
-})
-
-ESPSection:AddToggle({
-    Name = "Distance",
-    Default = true,
-    Save = true, Flag = "ESPDistance",
-    Callback = function(v) Config.ESPDistance = v end
-})
-
-ESPSection:AddToggle({
-    Name = "Health Bar",
-    Default = true,
-    Save = true, Flag = "ESPHealthBar",
-    Callback = function(v) Config.ESPHealthBar = v end
-})
-
-ESPSection:AddSlider({
-    Name = "Max Distance",
-    Min = 100, Max = 5000, Default = 1000,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 50, ValueName = "studs",
-    Save = true, Flag = "ESPMaxDist",
-    Callback = function(v) Config.ESPMaxDist = v end
-})
-
-ESPSection:AddColorpicker({
-    Name = "Box Color",
-    Default = Color3.fromRGB(255, 80, 80),
-    Flag = "ESPBoxColor",
-    Callback = function(v)
-        Config.ESPBoxColor = v
-        for _, d in pairs(ESPCache) do
-            if d.Box then d.Box.Color = v end
-        end
-    end
-})
-
--- ── Silent Aim Tab ────────────────────────────────────────────────────────────
-local SilentSection = SilentTab:AddSection({ Name = "Silent Aim" })
-
-SilentSection:AddToggle({
-    Name = "Enable Silent Aim",
-    Default = false,
-    Save = true, Flag = "SilentEnabled",
-    Callback = function(v) Config.SilentEnabled = v end
-})
-
-SilentSection:AddDropdown({
-    Name = "Hitpart",
-    Default = "Head",
-    Options = { "Head", "HumanoidRootPart", "UpperTorso" },
-    Save = true, Flag = "SilentHitpart",
-    Callback = function(v) Config.SilentHitpart = v end
-})
-
-SilentSection:AddSlider({
-    Name = "FOV",
-    Min = 10, Max = 800, Default = 200,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 10, ValueName = "px",
-    Save = true, Flag = "SilentFOV",
-    Callback = function(v) Config.SilentFOV = v end
-})
-
--- ── Misc Tab ──────────────────────────────────────────────────────────────────
-local VoidSection   = MiscTab:AddSection({ Name = "VoidSpam" })
-local OffsetSection = MiscTab:AddSection({ Name = "Character Offset" })
-local OrbitSection  = MiscTab:AddSection({ Name = "Orbit" })
-
--- VoidSpam
-VoidSection:AddToggle({
-    Name = "Enable VoidSpam",
-    Default = false,
-    Save = true, Flag = "VoidEnabled",
-    Callback = function(v) Config.VoidEnabled = v end
-})
-
-VoidSection:AddSlider({
-    Name = "Speed",
-    Min = 1, Max = 20, Default = 5,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "x0.01s",
-    Save = true, Flag = "VoidSpeed",
-    Callback = function(v) Config.VoidSpeed = v / 100 end
-})
-
-VoidSection:AddLabel("Keybind: V — toggles VoidSpam on/off")
-
--- Character Offset
-OffsetSection:AddToggle({
-    Name = "Enable Offset",
-    Default = false,
-    Save = true, Flag = "OffsetEnabled",
-    Callback = function(v) Config.OffsetEnabled = v end
-})
-
-OffsetSection:AddSlider({
-    Name = "Offset X",
-    Min = -20, Max = 20, Default = 0,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "",
-    Save = true, Flag = "OffsetX",
-    Callback = function(v) Config.OffsetX = v end
-})
-
-OffsetSection:AddSlider({
-    Name = "Offset Y",
-    Min = -20, Max = 20, Default = 0,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "",
-    Save = true, Flag = "OffsetY",
-    Callback = function(v) Config.OffsetY = v end
-})
-
-OffsetSection:AddSlider({
-    Name = "Offset Z",
-    Min = -20, Max = 20, Default = 0,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "",
-    Save = true, Flag = "OffsetZ",
-    Callback = function(v) Config.OffsetZ = v end
-})
-
--- Orbit
-OrbitSection:AddToggle({
-    Name = "Enable Orbit",
-    Default = false,
-    Save = true, Flag = "OrbitEnabled",
-    Callback = function(v) Config.OrbitEnabled = v end
-})
-
-OrbitSection:AddSlider({
-    Name = "Radius",
-    Min = 2, Max = 50, Default = 8,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "studs",
-    Save = true, Flag = "OrbitRadius",
-    Callback = function(v) Config.OrbitRadius = v end
-})
-
-OrbitSection:AddSlider({
-    Name = "Speed",
-    Min = 1, Max = 20, Default = 2,
-    Color = Color3.fromRGB(255, 80, 80),
-    Increment = 1, ValueName = "rad/s",
-    Save = true, Flag = "OrbitSpeed",
-    Callback = function(v) Config.OrbitSpeed = v end
-})
-
-OrbitSection:AddDropdown({
-    Name = "Target Player",
-    Default = "Select Target",
-    Options = (function()
-        local names = {}
+OrbitGroup:AddDropdown("OrbitTarget", {
+    Text    = "Target Player",
+    Default = "None",
+    Values  = (function()
+        local names = {"None"}
         for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer then
-                table.insert(names, p.Name)
-            end
+            if p ~= LocalPlayer then table.insert(names, p.Name) end
         end
         return names
     end)(),
     Callback = function(v)
-        Config.OrbitTarget = Players:FindFirstChild(v)
-    end
+        Cfg.OrbitTarget = v ~= "None" and Players:FindFirstChild(v) or nil
+    end,
 })
 
--- ─── Init ─────────────────────────────────────────────────────────────────────
-OrionLib:Init()
+-- ── ESP Tab ───────────────────────────────────────────────────────────────────
+local EL = ESPTab:AddLeftGroupbox("ESP")
+local ER = ESPTab:AddRightGroupbox("Options")
+
+EL:AddToggle("ESPEnabled", { Text = "Enable ESP",  Default = false })
+EL:AddToggle("ESPBoxes",   { Text = "Boxes",       Default = true  })
+EL:AddToggle("ESPNames",   { Text = "Names",       Default = true  })
+EL:AddToggle("ESPDist",    { Text = "Distance",    Default = true  })
+EL:AddToggle("ESPHealth",  { Text = "Health Bar",  Default = true  })
+ER:AddSlider("ESPMaxDist", {
+    Text    = "Max Distance",
+    Default = 1000, Min = 100, Max = 5000, Rounding = 0,
+    Suffix  = " studs",
+})
+
+-- ── Settings Tab ─────────────────────────────────────────────────────────────
+-- SaveManager and ThemeManager must receive the TAB object, not a groupbox
+SaveManager:SetLibrary(Library)
+SaveManager:SetFolder("RivalsSuite")
+SaveManager:BuildConfigSection(SettingsTab)
+
+ThemeManager:SetLibrary(Library)
+ThemeManager:ApplyToTab(SettingsTab)
+
+-- ── Cleanup ───────────────────────────────────────────────────────────────────
+Library:OnUnload(function()
+    for _, d in pairs(ESPCache) do for _, v in pairs(d) do v:Remove() end end
+    setreadonly(mt, false)
+    mt.__namecall = old
+    setreadonly(mt, true)
+end)
+
+SaveManager:LoadAutoloadConfig()
